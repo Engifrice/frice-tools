@@ -6,6 +6,8 @@ These tools are expected to only run on desktop platforms.
 ## Status:
 [![CI](https://github.com/Engifrice/frice-tools/actions/workflows/pr.yml/badge.svg?branch=main&event=push)](https://github.com/Engifrice/frice-tools/actions/workflows/pr.yml)
 
+[![Release](https://img.shields.io/github/v/release/Engifrice/frice-tools)](https://github.com/Engifrice/frice-tools/releases/latest)
+
 ## List of Tools:
 Build tools:
 - [CMake](https://cmake.org/download/), the CMake build-system executable,
