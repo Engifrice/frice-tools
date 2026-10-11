@@ -143,7 +143,9 @@ def stage_tool(tool: Tool, platform: str, build_dir: Path, cache_dir: Path, *, l
 
     downloaded = fetch(source["url"], source["sha256"], cache_dir, log=log)
     source_root = work / "src"
-    extract(downloaded, source_root, source.get("strip_components", 0))
+    links = extract(downloaded, source_root, source.get("strip_components", 0))
+    if links:
+        log(f"skipped {len(links)} symbolic link{'s' if len(links) != 1 else ''} in the archive")
     _repackage(tool, build, source_root, stage)
 
     licenses = visible_files(tool.directory / LICENSES_DIR)

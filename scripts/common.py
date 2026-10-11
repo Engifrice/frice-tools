@@ -26,6 +26,9 @@ GROUP_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 # Host tokens: <os>-<isa>, the engine's OS and ISA enum names in lowercase.
 PLATFORM_RE = re.compile(r"^(windows|linux|macos)-(x86_64|arm64)$")
 
+# Operating system names, the first half of a host token.
+OS_RE = re.compile(r"^(windows|linux|macos)$")
+
 # Toolset release versions: YYYY.MM.N.
 TOOLSET_VERSION_RE = re.compile(r"^[0-9]{4}\.(0[1-9]|1[0-2])\.(0|[1-9][0-9]*)$")
 
@@ -41,8 +44,12 @@ SMOKE_DIR = "smoke"
 # Per-tool build script, used by the "script" strategy.
 BUILD_SCRIPT = "build.py"
 
-# Archive paths in the zips: printable ASCII without spaces or backslashes.
-ARCHIVE_PATH_RE = re.compile(r"^[A-Za-z0-9._+@-]+(?:/[A-Za-z0-9._+@-]+)*$")
+# Archive paths in the zips: letters, digits and ._+@- in each segment, plus
+# single spaces between them (CMake ships "Ninja Multi-Config.rst"). Nothing
+# that is invalid or trimmed on Windows, no backslashes, no leading or
+# trailing spaces.
+_SEGMENT = r"[A-Za-z0-9._+@-]+(?: [A-Za-z0-9._+@-]+)*"
+ARCHIVE_PATH_RE = re.compile(rf"^{_SEGMENT}(?:/{_SEGMENT})*$")
 
 
 @dataclass(frozen=True, order=True)
@@ -82,15 +89,20 @@ def visible_files(directory: Path) -> list[Path]:
 
 
 def effective_build(spec: dict, platform: str) -> dict:
-    """[build] as seen by one platform: overrides replace keys, 'args' are appended."""
+    """[build] as seen by one platform.
+
+    [build.<os>] applies first, then [build.<platform>]. Override keys replace
+    the value from before, except 'args', which are appended.
+    """
     build = spec["build"]
-    merged = {key: value for key, value in build.items() if not PLATFORM_RE.match(key)}
-    override = build.get(platform, {})
-    for key, value in override.items():
-        if key == "args":
-            merged["args"] = list(merged.get("args", [])) + list(value)
-        else:
-            merged[key] = value
+    merged = {key: value for key, value in build.items() if not (PLATFORM_RE.match(key) or OS_RE.match(key))}
+    os_name = platform.split("-", 1)[0]
+    for override in (build.get(os_name, {}), build.get(platform, {})):
+        for key, value in override.items():
+            if key == "args":
+                merged["args"] = list(merged.get("args", [])) + list(value)
+            else:
+                merged[key] = value
     return merged
 
 

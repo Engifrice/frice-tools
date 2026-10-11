@@ -1,8 +1,12 @@
 """Safe extraction of zip, tar.gz and tar.xz archives.
 
 Every member path is checked before anything is written: no absolute paths,
-no '..', no backslashes, no duplicates, no links or special files. The format
-is detected from the first bytes, so cached files need no extension.
+no '..', no backslashes, no duplicates, no special files. The format is
+detected from the first bytes, so cached files need no extension.
+
+Symbolic links are never created: they are skipped and reported, so nothing
+shipped can depend on one, and a link can never point outside the
+destination. Tar hard links are written as ordinary copies of their target.
 
 Unix permissions are kept only as "executable or not": extracted files are
 0755 when the archive marks any execute bit, 0644 otherwise.
@@ -79,55 +83,68 @@ class _Writer:
         target.chmod(0o755 if executable else 0o644)
 
 
-def _extract_zip(path: Path, writer: _Writer, strip: int) -> None:
+def _extract_zip(path: Path, writer: _Writer, strip: int, skipped: list[str]) -> None:
     with zipfile.ZipFile(path) as archive:
         for info in archive.infolist():
-            relative = _member_path(info.filename, strip, info.is_dir())
+            # On Windows, zipfile turns backslashes into '/' in info.filename; check
+            # the name as stored so every host accepts and rejects the same archives.
+            name = info.orig_filename
             mode = info.external_attr >> 16 if info.create_system == 3 else 0
             kind = stat.S_IFMT(mode)  # 0 when the tool that made the zip left the type out
             if kind == stat.S_IFLNK:
-                raise ArchiveError(f"member {info.filename!r}: symbolic links are not supported")
+                skipped.append(name)
+                continue
+            relative = _member_path(name, strip, info.is_dir())
             if relative is None:
                 continue
             if info.is_dir():
                 writer.directory(relative)
                 continue
             if kind not in (0, stat.S_IFREG):
-                raise ArchiveError(f"member {info.filename!r}: not a regular file")
+                raise ArchiveError(f"member {name!r}: not a regular file")
             with archive.open(info) as source:
                 writer.file(relative, source, executable=bool(mode & 0o111))
 
 
-def _extract_tar(path: Path, writer: _Writer, strip: int, compression: str) -> None:
+def _extract_tar(path: Path, writer: _Writer, strip: int, compression: str, skipped: list[str]) -> None:
     with tarfile.open(path, f"r:{compression}") as archive:
         for member in archive:
-            if member.issym() or member.islnk():
-                raise ArchiveError(f"member {member.name!r}: links are not supported")
+            if member.issym():
+                skipped.append(member.name)
+                continue
             relative = _member_path(member.name, strip, member.isdir())
-            if not (member.isfile() or member.isdir()):
+            if not (member.isfile() or member.isdir() or member.islnk()):
                 raise ArchiveError(f"member {member.name!r}: not a regular file or directory")
             if relative is None:
                 continue
             if member.isdir():
                 writer.directory(relative)
                 continue
-            source = archive.extractfile(member)
+            try:
+                source = archive.extractfile(member)  # a hard link yields its target's data
+            except KeyError as error:
+                raise ArchiveError(f"member {member.name!r}: hard link to a missing member") from error
             assert source is not None
             with source:
                 writer.file(relative, source, executable=bool(member.mode & 0o111))
 
 
-def extract(path: Path, dest: Path, strip_components: int = 0) -> None:
-    """Extract the archive at path into dest, which must not exist yet."""
+def extract(path: Path, dest: Path, strip_components: int = 0) -> list[str]:
+    """Extract the archive at path into dest, which must not exist yet.
+
+    Returns the names of the symbolic links that were skipped.
+    """
     if dest.exists():
         raise ArchiveError(f"{dest}: already exists")
     dest.mkdir(parents=True)
     writer = _Writer(dest)
+    skipped: list[str] = []
     kind = detect_format(path)
     try:
         if kind == "zip":
-            _extract_zip(path, writer, strip_components)
+            _extract_zip(path, writer, strip_components, skipped)
         else:
-            _extract_tar(path, writer, strip_components, kind.split(".")[1])
+            _extract_tar(path, writer, strip_components, kind.split(".")[1], skipped)
     except (zipfile.BadZipFile, tarfile.TarError, EOFError) as error:
         raise ArchiveError(f"{path}: corrupt archive: {error}") from error
+    return skipped

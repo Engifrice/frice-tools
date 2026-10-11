@@ -16,6 +16,7 @@ from common import (
     BUILD_SCRIPT,
     LICENSES_DIR,
     NAME_RE,
+    OS_RE,
     PLATFORM_RE,
     SMOKE_DIR,
     SMOKE_PLACEHOLDERS,
@@ -173,10 +174,13 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
         if token not in platforms:
             report(f"platforms: '{token}' is not defined in {PLATFORMS_FILE}")
 
-    # Build overrides only for declared platforms.
+    # Build overrides only for declared platforms and their operating systems.
+    declared_os = {token.split("-", 1)[0] for token in declared}
     for key in sorted(spec["build"]):
         if PLATFORM_RE.match(key) and key not in declared:
             report(f"build.{key}: override for a platform the tool does not declare")
+        elif OS_RE.match(key) and key not in declared_os:
+            report(f"build.{key}: override for an OS none of the tool's platforms use")
 
     # Sources.
     source = spec.get("source")
