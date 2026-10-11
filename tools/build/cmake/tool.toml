@@ -1,7 +1,7 @@
 # CMake: the official release binaries, repackaged.
 #
 # Ships cmake and its data directory share/cmake-<major>.<minor>/ (modules,
-# templates, help). On Windows it also ships cmcldeps.exe, which the Ninja
+# templates). On Windows it also ships cmcldeps.exe, which the Ninja
 # generator runs for .rc files with MSVC (Windows-MSVC.cmake sets
 # CMAKE_NINJA_CMCLDEPS_RC).
 #
@@ -51,10 +51,10 @@ strip_components = 3
 
 [build]
 strategy = "repackage"
-pick     = ["bin/cmake", "bin/ctest", "bin/cpack", "share/cmake-*"]
+pick     = ["bin/cmake", "bin/ctest", "bin/cpack", "share/cmake-*/Modules", "share/cmake-*/Templates", "share/cmake-*/Licenses"]
 
 [build.windows]
-pick = ["bin/cmake.exe", "bin/ctest.exe", "bin/cpack.exe", "bin/cmcldeps.exe", "share/cmake-*"]
+pick = ["bin/cmake.exe", "bin/ctest.exe", "bin/cpack.exe", "bin/cmcldeps.exe", "share/cmake-*/Modules", "share/cmake-*/Templates", "share/cmake-*/Licenses"]
 
 [executables]
 cmake = "bin/cmake"
