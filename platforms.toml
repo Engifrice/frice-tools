@@ -48,8 +48,7 @@ lib_suffix = ".so"
 [platforms.macos-arm64]
 os         = "macos"
 isa        = "arm64"
-runner     = "macos-15"
+runner     = "macos-26" # because of slang
 exe_suffix = ""
 lib_prefix = "lib"
 lib_suffix = ".dylib"
-# The minimum macOS version is still an open decision.
