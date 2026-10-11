@@ -1,0 +1,15 @@
+# Build outputs and caches of the pipeline scripts
+/build/
+/out/
+/.build/
+/.cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
