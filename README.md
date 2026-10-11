@@ -3,6 +3,9 @@ The `engifrice` editor is quite barebone. To complement its missing features, th
 
 These tools are expected to only run on desktop platforms.
 
+## Status:
+[![CI](https://github.com/Engifrice/frice-tools/actions/workflows/pr.yml/badge.svg?branch=main&event=push)](https://github.com/Engifrice/frice-tools/actions/workflows/pr.yml)
+
 ## List of Tools:
 Build tools:
 - [CMake](https://cmake.org/download/), the CMake build-system executable,
