@@ -26,9 +26,10 @@ strategy = "repackage"         # repackage | cmake | script
 pick     = ["bin/@NAME@*", "LICENSE*"]
 flatten  = true
 
-# Per-platform overrides: 'args' are appended, other keys replace [build] values.
-# [build.linux-x86_64]
-# args = ["-DEXAMPLE=ON"]
+# Overrides per OS ([build.windows]) and per platform ([build.linux-x86_64]),
+# applied in that order: 'args' are appended, other keys replace earlier values.
+# [build.windows]
+# pick = ["bin/@NAME@.exe", "LICENSE*"]
 
 # Programs, relative to the tool directory, without the platform's ".exe".
 [executables]

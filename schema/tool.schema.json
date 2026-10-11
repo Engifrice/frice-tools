@@ -196,11 +196,12 @@
         "env": { "$ref": "#/$defs/env" }
       },
       "patternProperties": {
+        "^(windows|linux|macos)$": { "$ref": "#/$defs/buildOverride" },
         "^(windows|linux|macos)-(x86_64|arm64)$": { "$ref": "#/$defs/buildOverride" }
       }
     },
     "buildOverride": {
-      "description": "Per-platform build settings. 'args' are appended; the other keys replace the [build] value.",
+      "description": "Per-OS ([build.windows]) or per-platform ([build.windows-arm64]) build settings, applied in that order. 'args' are appended; the other keys replace the earlier value.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
