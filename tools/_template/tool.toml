@@ -1,0 +1,49 @@
+# Template for a new tool. Discovery skips this folder (leading underscore).
+#
+# Create a tool from it with:
+#     python scripts/tools.py new <group>/<name>
+# which copies this folder to tools/<group>/<name>/ and replaces @NAME@.
+# Then fill in every value below; the linter rejects the placeholder sha256.
+# Put the license texts of everything shipped in LICENSES/ next to this file.
+
+schema           = 1
+name             = "@NAME@"
+description      = "One line saying what the tool does."
+homepage         = "https://example.com/"
+version          = "1.0.0"     # lowercase, no leading v, '-' and '+' written as '_'
+upstream_version = "v1.0.0"    # the upstream tag or version, verbatim
+license          = ["MIT"]     # SPDX identifiers of what ships
+platforms        = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64", "macos-arm64"]
+
+# One source for every platform (as here), or one [source.<platform>] table per
+# platform. A git source uses: git = "https://...", ref = "<tag>", commit = "<40 hex>".
+[source]
+url    = "https://example.com/@NAME@-1.0.0.tar.gz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[build]
+strategy = "repackage"         # repackage | cmake | script
+pick     = ["bin/@NAME@*", "LICENSE*"]
+flatten  = true
+
+# Per-platform overrides: 'args' are appended, other keys replace [build] values.
+# [build.linux-x86_64]
+# args = ["-DEXAMPLE=ON"]
+
+# Programs, relative to the tool directory, without the platform's ".exe".
+[executables]
+"@NAME@" = "@NAME@"
+
+# Shared libraries the engine may load, without the platform's prefix and suffix.
+# [libraries]
+# capture = "example"
+
+# Another tool whose files are copied into this tool's directory.
+# [[depends]]
+# tool      = "other"
+# libraries = ["some_library"]
+
+[[smoke]]
+entrypoint    = "@NAME@"
+args          = ["--version"]
+expect_output = "1.0.0"
