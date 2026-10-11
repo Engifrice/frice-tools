@@ -9,12 +9,12 @@ Build tools:
 - [Ninja](https://github.com/ninja-build/ninja), used as the target output of CMake.
 
 Profiling:
-- [Tracy](https://github.com/wolfpld/tracy), the CPU profiler used by the engine,
-- [RenderDoc](https://renderdoc.org/builds), the GPU frame analyzer.
+- [Tracy](https://github.com/wolfpld/tracy), the CPU profiler used by the engine.
 
-Shaders:
-- [Slang](https://github.com/shader-slang/slang), the `slang` (shader language) compiler
+Graphics:
+- [RenderDoc](https://renderdoc.org/builds), the GPU frame analyzer,
+- [Slang](https://github.com/shader-slang/slang), the `slang` (shader language) compiler.
 
-Image, Video, Audio:
+Media:
 - [ffmpeg](https://ffmpeg.org/), to convert audio and video codecs,
-- [ktx2](https://github.com/KhronosGroup/KTX-Software), to convert images to KTX2
+- [ktx2](https://github.com/KhronosGroup/KTX-Software), to convert images to KTX2.
