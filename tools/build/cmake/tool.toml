@@ -3,9 +3,7 @@
 # Ships cmake and its data directory share/cmake-<major>.<minor>/ (modules,
 # templates, help). On Windows it also ships cmcldeps.exe, which the Ninja
 # generator runs for .rc files with MSVC (Windows-MSVC.cmake sets
-# CMAKE_NINJA_CMCLDEPS_RC). Left out: ctest, cpack, ccmake, cmake-gui, the
-# HTML documentation and man pages. Executables can be added later without
-# breaking the contract; removing one would break it.
+# CMAKE_NINJA_CMCLDEPS_RC).
 #
 # cmake finds its data at <bin>/../share/cmake-<major>.<minor>, so the bin/
 # and share/ layout is kept. The macOS archive wraps everything in
@@ -53,13 +51,15 @@ strip_components = 3
 
 [build]
 strategy = "repackage"
-pick     = ["bin/cmake", "share/cmake-*"]
+pick     = ["bin/cmake", "bin/ctest", "bin/cpack", "share/cmake-*"]
 
 [build.windows]
-pick = ["bin/cmake.exe", "bin/cmcldeps.exe", "share/cmake-*"]
+pick = ["bin/cmake.exe", "bin/ctest.exe", "bin/cpack.exe", "bin/cmcldeps.exe", "share/cmake-*"]
 
 [executables]
 cmake = "bin/cmake"
+ctest = "bin/ctest"
+cpack = "bin/cpack"
 
 [[smoke]]
 entrypoint    = "cmake"
@@ -71,3 +71,13 @@ expect_output = "cmake version 4.4.4"
 entrypoint    = "cmake"
 args          = ["-DSTAGE={stage}", "-P", "{smoke}/check.cmake"]
 expect_output = "frice-cmake-ok 4.4.4"
+
+[[smoke]]
+entrypoint    = "ctest"
+args          = ["--version"]
+expect_output = "ctest version 4.4.4"
+
+[[smoke]]
+entrypoint    = "cpack"
+args          = ["--version"]
+expect_output = "cpack version 4.4.4"
