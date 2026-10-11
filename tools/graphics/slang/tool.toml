@@ -1,0 +1,139 @@
+# Slang: the official release binaries, repackaged.
+#
+# Ships slangc and what it loads at run time:
+#   slang-compiler     the compiler itself (slangc links to it)
+#   slang-glslang      glslang and SPIRV-Tools; every SPIR-V output needs it
+#                      (without it: "failed to load downstream compiler 'spirv-opt'")
+#   slang-glsl-module  the precompiled GLSL compatibility module, for GLSL input
+#   slang-standard-module-<version>/
+#                      modules for experimental imports such as slang.neural
+#                      (used with -experimental-feature)
+# Left out: slang-llvm (CPU targets, 84 MB on Windows, 152 MB on Linux), slang-rt,
+# gfx, the slang, slangd and slangi programs, headers, import libraries, CMake
+# files and documentation.
+#
+# DXIL output also needs DXC's dxcompiler, which comes with the DXC tool.
+#
+# Layout: Windows keeps everything in bin/. Linux and macOS keep bin/ and lib/:
+# slangc finds its libraries through RUNPATH $ORIGIN/../lib (Linux) and
+# @loader_path/../lib (macOS), and slang-compiler finds the modules next to
+# itself. The archives' unversioned names (libslang.so and so on) are symbolic
+# links that are not shipped; slangc and slang-compiler load the real,
+# versioned files.
+#
+# Linux uses Slang's "glibc-2.28" builds: the same release, built to need only
+# glibc 2.17 and GCC 6's libstdc++ (the default builds need glibc 2.34 and GCC
+# 11's). The macOS build requires macOS 26: Slang builds it on GitHub's
+# macos-latest runner without setting a lower minimum.
+#
+# LICENSES/ holds LICENSE, LICENSES/ and third-party-notices/ from the release
+# archives, flattened, with LF line endings. mimalloc is linked into the
+# Windows builds only.
+
+schema           = 1
+name             = "slang"
+description      = "Shading language compiler: Slang and HLSL to SPIR-V, HLSL, GLSL, Metal, WGSL and DXIL."
+homepage         = "https://shader-slang.org/"
+version          = "2026.19"
+upstream_version = "v2026.19"
+license          = [
+    "Apache-2.0 WITH LLVM-exception",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MIT",
+    "GPL-3.0-or-later WITH Bison-exception-2.2",
+]
+platforms        = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64", "macos-arm64"]
+
+# Hashes match the SHA-256 digests on the v2026.19 release page.
+[source.windows-x86_64]
+url    = "https://github.com/shader-slang/slang/releases/download/v2026.19/slang-2026.19-windows-x86_64.tar.gz"
+sha256 = "fa7629c9ce59c87c821614ae4b52e52f785d4c659a5a06a89fa9ec86d615eeee"
+
+[source.windows-arm64]
+url    = "https://github.com/shader-slang/slang/releases/download/v2026.19/slang-2026.19-windows-aarch64.tar.gz"
+sha256 = "e47c327262a56e99a9ae07c31c3bab5ea5a531ffd3b75b5d5746b24b63a6e751"
+
+[source.linux-x86_64]
+url    = "https://github.com/shader-slang/slang/releases/download/v2026.19/slang-2026.19-linux-x86_64-glibc-2.28.tar.gz"
+sha256 = "bd7afcb0956dee9304f44ed115e9aaa7140704271b5c3294bcb237e3ae67adc7"
+
+[source.linux-arm64]
+url    = "https://github.com/shader-slang/slang/releases/download/v2026.19/slang-2026.19-linux-aarch64-glibc-2.28.tar.gz"
+sha256 = "f49229eb9606b47b122e1d8789be46a7bcd6bb2ffa94b06fae6d544a4e6df637"
+
+[source.macos-arm64]
+url    = "https://github.com/shader-slang/slang/releases/download/v2026.19/slang-2026.19-macos-aarch64.tar.gz"
+sha256 = "fa46822c92d81404a7951de3746093985c1e6f520f4b533e2aa3bea576f0f2f0"
+
+[build]
+strategy = "repackage"
+
+[build.windows]
+pick = [
+    "bin/slangc.exe",
+    "bin/slang-compiler.dll",
+    "bin/slang-glslang.dll",
+    "bin/slang-glsl-module.dll",
+    "bin/slang-standard-module-*",
+]
+
+[build.linux]
+pick = [
+    "bin/slangc",
+    "lib/libslang-compiler.so.*",
+    "lib/libslang-glslang-*.so",
+    "lib/libslang-glsl-module-*.so",
+    "lib/slang-standard-module-*",
+]
+
+[build.macos]
+pick = [
+    "bin/slangc",
+    "lib/libslang-compiler.*.dylib",
+    "lib/libslang-glslang-*.dylib",
+    "lib/libslang-glsl-module-*.dylib",
+    "lib/slang-standard-module-*",
+]
+
+[executables]
+slangc = "bin/slangc"
+
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["-v"]
+expect_output = "2026.19"
+
+# SPIR-V goes through spirv-opt in slang-glslang.
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["{smoke}/compute.slang", "-target", "spirv-asm", "-entry", "main", "-stage", "compute"]
+expect_output = "OpEntryPoint GLCompute"
+
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["{smoke}/compute.slang", "-target", "hlsl", "-entry", "main", "-stage", "compute"]
+expect_output = "numthreads(64, 1, 1)"
+
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["{smoke}/compute.slang", "-target", "metal", "-entry", "main", "-stage", "compute"]
+expect_output = "[[kernel]] void"
+
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["{smoke}/compute.slang", "-target", "wgsl", "-entry", "main", "-stage", "compute"]
+expect_output = "@compute"
+
+# GLSL input loads slang-glsl-module.
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["{smoke}/glsl-input.slang", "-target", "spirv-asm", "-entry", "main", "-stage", "compute"]
+expect_output = "OpEntryPoint GLCompute"
+
+# Experimental imports load slang-standard-module-<version>/.
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["{smoke}/neural.slang", "-target", "spirv-asm", "-experimental-feature"]
+expect_output = "OpEntryPoint GLCompute"
