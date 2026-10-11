@@ -92,4 +92,4 @@ jobs:
           path: out/frice-tools-*.zip
           archive: false
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
