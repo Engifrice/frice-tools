@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "frice-tools tool.toml, schema 1",
+  "description": "One tool of the toolset. Validated by scripts/lint.py, which supports the subset of JSON Schema used here.",
+  "type": "object",
+  "required": ["schema", "name", "version", "upstream_version", "license", "platforms", "build"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "description": "Format version of this file.",
+      "const": 1
+    },
+    "name": {
+      "description": "Tool name. Must equal the name of the directory holding this file.",
+      "$ref": "#/$defs/toolName"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "homepage": {
+      "$ref": "#/$defs/httpsUrl"
+    },
+    "version": {
+      "description": "Normalized version: lowercase, no leading v, '-' and '+' written as '_'.",
+      "type": "string",
+      "pattern": "^[0-9a-z][0-9a-z._]*$"
+    },
+    "upstream_version": {
+      "description": "The upstream tag or version, verbatim.",
+      "type": "string",
+      "minLength": 1
+    },
+    "license": {
+      "description": "SPDX identifiers of what ships.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "platforms": {
+      "description": "Hosts this tool ships on. On any other host the tool is absent.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/platform" },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "source": {
+      "description": "One source for every platform, or one table per platform (plus an optional 'src' table for a source archive).",
+      "oneOf": [
+        { "$ref": "#/$defs/source" },
+        { "$ref": "#/$defs/sourcePerPlatform" }
+      ]
+    },
+    "build": {
+      "$ref": "#/$defs/build"
+    },
+    "depends": {
+      "description": "Other tools whose files are copied into this tool's directory.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/dependency" }
+    },
+    "executables": {
+      "description": "Key to path of a program, relative to the tool directory, without the platform's executable suffix.",
+      "$ref": "#/$defs/entryMap"
+    },
+    "libraries": {
+      "description": "Key to path of a shared library the engine may load, relative to the tool directory, without the platform's prefix and suffix.",
+      "$ref": "#/$defs/entryMap"
+    },
+    "smoke": {
+      "description": "Commands run against the assembled zip on each host.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/smoke" }
+    },
+    "require": {
+      "description": "Capability lists checked by a tool-specific probe, such as FFmpeg encoders.",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "toolName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "platform": {
+      "type": "string",
+      "pattern": "^(windows|linux|macos)-(x86_64|arm64)$"
+    },
+    "httpsUrl": {
+      "type": "string",
+      "pattern": "^https://[^\\s]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relPath": {
+      "description": "Relative path using '/', without '..' segments.",
+      "type": "string",
+      "pattern": "^(?!/)(?!.*//)(?!(?:.*/)?\\.\\.(?:/|$))[A-Za-z0-9._+@-]+(?:/[A-Za-z0-9._+@-]+)*$"
+    },
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "globList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*$": { "type": "string" }
+      }
+    },
+    "urlSource": {
+      "type": "object",
+      "required": ["url", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "$ref": "#/$defs/httpsUrl" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "pgp_fingerprint": {
+          "description": "40 hex digits, uppercase, no spaces.",
+          "type": "string",
+          "pattern": "^[0-9A-F]{40}$"
+        },
+        "sig_url": { "$ref": "#/$defs/httpsUrl" },
+        "strip_components": {
+          "description": "Leading path components removed when extracting.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gitSource": {
+      "type": "object",
+      "required": ["git", "ref", "commit"],
+      "additionalProperties": false,
+      "properties": {
+        "git": { "$ref": "#/$defs/httpsUrl" },
+        "ref": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "submodules": { "type": "boolean" }
+      }
+    },
+    "source": {
+      "oneOf": [
+        { "$ref": "#/$defs/urlSource" },
+        { "$ref": "#/$defs/gitSource" }
+      ]
+    },
+    "sourcePerPlatform": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^((windows|linux|macos)-(x86_64|arm64)|src)$": { "$ref": "#/$defs/source" }
+      }
+    },
+    "strategy": {
+      "enum": ["repackage", "cmake", "script"]
+    },
+    "build": {
+      "type": "object",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "$ref": "#/$defs/strategy" },
+        "pick": { "$ref": "#/$defs/globList" },
+        "flatten": { "type": "boolean" },
+        "target": { "type": "string", "minLength": 1 },
+        "args": { "$ref": "#/$defs/stringList" },
+        "cmake_dirs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relPath" },
+          "minItems": 1
+        },
+        "container": { "type": "string", "minLength": 1 },
+        "env": { "$ref": "#/$defs/env" }
+      },
+      "patternProperties": {
+        "^(windows|linux|macos)-(x86_64|arm64)$": { "$ref": "#/$defs/buildOverride" }
+      }
+    },
+    "buildOverride": {
+      "description": "Per-platform build settings. 'args' are appended; the other keys replace the [build] value.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "$ref": "#/$defs/strategy" },
+        "pick": { "$ref": "#/$defs/globList" },
+        "target": { "type": "string", "minLength": 1 },
+        "args": { "$ref": "#/$defs/stringList" },
+        "container": { "type": "string", "minLength": 1 },
+        "env": { "$ref": "#/$defs/env" }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "required": ["tool"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "$ref": "#/$defs/toolName" },
+        "libraries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/key" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "executables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/key" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "entryMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_-]*$": { "$ref": "#/$defs/relPath" }
+      }
+    },
+    "smoke": {
+      "type": "object",
+      "required": ["entrypoint"],
+      "additionalProperties": false,
+      "properties": {
+        "entrypoint": { "$ref": "#/$defs/key" },
+        "args": { "$ref": "#/$defs/stringList" },
+        "platforms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/platform" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "expect_output": { "type": "string", "minLength": 1 },
+        "forbid_output": { "type": "string", "minLength": 1 },
+        "expect_exit": { "type": "integer" },
+        "timeout": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

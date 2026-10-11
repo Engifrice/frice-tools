@@ -1,0 +1,55 @@
+# The host platforms toolsets are built for. Single source of truth: the linter
+# checks every tool.toml against this file, and CI builds one job per entry.
+#
+# Keys per platform:
+#   os, isa      must match the token (the engine's OS and ISA names, lowercase)
+#   runner       GitHub Actions runner label
+#   container    optional container image the build runs in
+#   exe_suffix   appended to executable paths in manifest.json
+#   lib_prefix   prepended to library base names in manifest.json
+#   lib_suffix   appended to library base names in manifest.json
+
+schema = 1
+
+[platforms.windows-x86_64]
+os         = "windows"
+isa        = "x86_64"
+runner     = "windows-2025"
+exe_suffix = ".exe"
+lib_prefix = ""
+lib_suffix = ".dll"
+
+[platforms.windows-arm64]
+os         = "windows"
+isa        = "arm64"
+runner     = "windows-11-arm"
+exe_suffix = ".exe"
+lib_prefix = ""
+lib_suffix = ".dll"
+
+[platforms.linux-x86_64]
+os         = "linux"
+isa        = "x86_64"
+runner     = "ubuntu-24.04"
+container  = "rockylinux:9"
+exe_suffix = ""
+lib_prefix = "lib"
+lib_suffix = ".so"
+
+[platforms.linux-arm64]
+os         = "linux"
+isa        = "arm64"
+runner     = "ubuntu-24.04-arm"
+container  = "rockylinux:9"
+exe_suffix = ""
+lib_prefix = "lib"
+lib_suffix = ".so"
+
+[platforms.macos-arm64]
+os         = "macos"
+isa        = "arm64"
+runner     = "macos-15"
+exe_suffix = ""
+lib_prefix = "lib"
+lib_suffix = ".dylib"
+# The minimum macOS version is still an open decision.

@@ -1,0 +1,95 @@
+# Checks every pull request and every push to main.
+#
+#   lint   the linter, then the build matrix from platforms.toml
+#          (the script tests run locally only: python -m unittest discover -s tests)
+#   build  one job per platform on its native runner: build, assemble, smoke,
+#          and the zip uploaded as a workflow artifact
+#
+# Actions are pinned to full commit SHAs; the comment names the release.
+
+name: pr
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Lint repository
+        run: python scripts/tools.py lint
+
+      - name: Compute build matrix
+        id: matrix
+        run: echo "matrix=$(python scripts/tools.py matrix)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.platform }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.lint.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    # Linux jobs run inside the container from platforms.toml, so smoke tests
+    # run in that older userland. For other platforms the value is empty and
+    # the job runs directly on the runner.
+    container: ${{ matrix.container }}
+    timeout-minutes: 30
+    env:
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: Prepare container
+        if: matrix.container != ''
+        run: |
+          dnf install -y --setopt=install_weak_deps=False python3.12 git-core
+          ln -sf /usr/bin/python3.12 /usr/local/bin/python
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.container == ''
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: python scripts/tools.py build --platform "$PLATFORM"
+
+      - name: Assemble
+        run: python scripts/tools.py assemble --platform "$PLATFORM"
+
+      - name: Smoke test
+        run: python scripts/tools.py smoke --platform "$PLATFORM"
+
+      # archive: false uploads the zip itself (named after the file), not a zip of it.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: out/frice-tools-*.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
