@@ -3,7 +3,7 @@
     python scripts/tools.py lint                 check the whole repository
     python scripts/tools.py list [--json]        list tools in build order
     python scripts/tools.py new <group>/<name>   create a tool from tools/_template
-    python scripts/tools.py build [<tool>...]    stage tools into build/<platform>/stage/
+    python scripts/tools.py build [<tool>...]    stage tools into build/<platform>/stage/ (--jobs N)
     python scripts/tools.py assemble             pack the staged tools into out/<zip>
     python scripts/tools.py smoke                run the smoke tests against out/<zip>
     python scripts/tools.py matrix               print the CI build matrix as JSON
@@ -18,14 +18,24 @@ import argparse
 import json
 import shutil
 import sys
+import traceback
 from pathlib import Path
 
 from archive import ArchiveError
 from assemble import AssembleError, assemble, zip_name
-from common import GROUP_RE, NAME_RE, REPO_ROOT, TOOL_FILE, display_path, host_platform, load_toml
+from common import (
+    GROUP_RE,
+    NAME_RE,
+    REPO_ROOT,
+    TOOL_FILE,
+    display_path,
+    host_platform,
+    load_toml,
+)
 from discover import discover, order_by_dependencies
 from fetch import FetchError
 from lint import PLATFORMS_FILE, TOOLSET_FILE, lint_repo
+from parallel import Logger, default_jobs, run_ordered
 from smoke import run_smoke
 from stage import StageError, stage_tool
 
@@ -70,7 +80,9 @@ class Repo:
     def platform(self, requested: str | None) -> str:
         platform = requested or host_platform()
         if platform is None:
-            print("cannot tell this machine's platform; pass --platform", file=sys.stderr)
+            print(
+                "cannot tell this machine's platform; pass --platform", file=sys.stderr
+            )
             raise SystemExit(2)
         if platform not in self.platforms:
             known = ", ".join(sorted(self.platforms))
@@ -93,18 +105,53 @@ def command_build(args: argparse.Namespace) -> int:
         if platform not in by_name[name].spec["platforms"]:
             print(f"{name} does not ship on {platform}", file=sys.stderr)
             return 2
+    # Named tools bring the tools they depend on.
+    wanted = set(args.tools)
+    queue = list(args.tools)
+    while queue:
+        for dependency in by_name[queue.pop()].dependency_names():
+            if dependency in by_name and dependency not in wanted:
+                wanted.add(dependency)
+                queue.append(dependency)
     selected = [
         tool
         for tool in repo.tools
-        if platform in tool.spec["platforms"] and (not args.tools or tool.name in args.tools)
+        if platform in tool.spec["platforms"]
+        and (not args.tools or tool.name in wanted)
     ]
-    for tool in selected:
-        try:
-            stage_tool(tool, platform, repo.build_dir, repo.cache_dir)
-        except PIPELINE_ERRORS as error:
-            print(f"{tool.name}: {error}", file=sys.stderr)
-            return 1
-    print(f"built {len(selected)} tool{'s' if len(selected) != 1 else ''} for {platform}")
+
+    jobs = args.jobs or default_jobs(len(selected))
+    logger = Logger(lambda message: print(message, flush=True))
+
+    def work(name: str) -> None:
+        stage_tool(
+            by_name[name],
+            platform,
+            repo.build_dir,
+            repo.cache_dir,
+            log=logger.prefixed(name),
+        )
+
+    failures, not_started = run_ordered(
+        [tool.name for tool in selected],
+        {tool.name: tool.dependency_names() for tool in selected},
+        work,
+        jobs,
+    )
+    for name, error in failures.items():
+        if isinstance(error, PIPELINE_ERRORS):
+            print(f"{name}: {error}", file=sys.stderr)
+        else:
+            print(f"{name}: unexpected error", file=sys.stderr)
+            traceback.print_exception(error)
+    if not_started:
+        print(f"not built after the failure: {', '.join(not_started)}", file=sys.stderr)
+    if failures:
+        return 1
+    count = len(selected)
+    print(
+        f"built {count} tool{'s' if count != 1 else ''} for {platform} ({jobs} job{'s' if jobs != 1 else ''})"
+    )
     return 0
 
 
@@ -112,7 +159,14 @@ def command_assemble(args: argparse.Namespace) -> int:
     repo = Repo(Path(args.root))
     platform = repo.platform(args.platform)
     try:
-        assemble(repo.tools, repo.version, platform, repo.platforms[platform], repo.build_dir, repo.out_dir)
+        assemble(
+            repo.tools,
+            repo.version,
+            platform,
+            repo.platforms[platform],
+            repo.build_dir,
+            repo.out_dir,
+        )
     except PIPELINE_ERRORS as error:
         print(error, file=sys.stderr)
         return 1
@@ -122,12 +176,20 @@ def command_assemble(args: argparse.Namespace) -> int:
 def command_smoke(args: argparse.Namespace) -> int:
     repo = Repo(Path(args.root))
     platform = repo.platform(args.platform)
-    zip_path = Path(args.zip) if args.zip else repo.out_dir / zip_name(repo.version, platform)
+    zip_path = (
+        Path(args.zip) if args.zip else repo.out_dir / zip_name(repo.version, platform)
+    )
     if not zip_path.is_file():
         print(f"{zip_path} not found; run assemble first", file=sys.stderr)
         return 1
     try:
-        failures = run_smoke(repo.tools, repo.version, platform, zip_path, repo.build_dir / platform / "smoke")
+        failures = run_smoke(
+            repo.tools,
+            repo.version,
+            platform,
+            zip_path,
+            repo.build_dir / platform / "smoke",
+        )
     except PIPELINE_ERRORS as error:
         print(error, file=sys.stderr)
         return 1
@@ -201,7 +263,9 @@ def command_new(args: argparse.Namespace) -> int:
     group_dir = tools_root / group
     if not group_dir.is_dir():
         groups = sorted(
-            p.name for p in tools_root.iterdir() if p.is_dir() and not p.name.startswith(("_", "."))
+            p.name
+            for p in tools_root.iterdir()
+            if p.is_dir() and not p.name.startswith(("_", "."))
         )
         print(
             f"group '{group}' does not exist (existing: {', '.join(groups)}); "
@@ -213,7 +277,10 @@ def command_new(args: argparse.Namespace) -> int:
     tools, _ = discover(tools_root, root)
     for tool in tools:
         if tool.name == name:
-            print(f"a tool named '{name}' already exists at {display_path(tool.directory, root)}", file=sys.stderr)
+            print(
+                f"a tool named '{name}' already exists at {display_path(tool.directory, root)}",
+                file=sys.stderr,
+            )
             return 2
     target = group_dir / name
     if target.exists():
@@ -225,40 +292,72 @@ def command_new(args: argparse.Namespace) -> int:
     for path in sorted(target.rglob("*")):
         if path.is_file():
             text = path.read_text(encoding="utf-8")
-            path.write_text(text.replace(NAME_PLACEHOLDER, name), encoding="utf-8", newline="\n")
+            path.write_text(
+                text.replace(NAME_PLACEHOLDER, name), encoding="utf-8", newline="\n"
+            )
 
     print(f"created {display_path(target / TOOL_FILE, root)}")
     print("fill in its values, then run: python scripts/tools.py lint")
     return 0
 
 
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="tools.py", description=__doc__.splitlines()[0])
-    parser.add_argument("--root", default=str(REPO_ROOT), help="repository root (default: this checkout)")
+    parser = argparse.ArgumentParser(
+        prog="tools.py", description=__doc__.splitlines()[0]
+    )
+    parser.add_argument(
+        "--root",
+        default=str(REPO_ROOT),
+        help="repository root (default: this checkout)",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    lint = commands.add_parser("lint", help="check platforms.toml, toolset.toml and every tool.toml")
+    lint = commands.add_parser(
+        "lint", help="check platforms.toml, toolset.toml and every tool.toml"
+    )
     lint.set_defaults(handler=command_lint)
 
     listing = commands.add_parser("list", help="list tools in dependency order")
     listing.add_argument("--json", action="store_true", help="print JSON")
     listing.set_defaults(handler=command_list)
 
-    new = commands.add_parser("new", help="create tools/<group>/<name>/ from the template")
+    new = commands.add_parser(
+        "new", help="create tools/<group>/<name>/ from the template"
+    )
     new.add_argument("path", metavar="<group>/<name>")
     new.set_defaults(handler=command_new)
 
     platform_help = "host platform token (default: this machine)"
     build = commands.add_parser("build", help="stage tools for one platform")
-    build.add_argument("tools", nargs="*", metavar="<tool>", help="tools to build (default: all)")
+    build.add_argument(
+        "tools", nargs="*", metavar="<tool>", help="tools to build (default: all)"
+    )
     build.add_argument("--platform", help=platform_help)
+    build.add_argument(
+        "--jobs",
+        type=_positive_int,
+        default=0,
+        metavar="N",
+        help="tools built at once (default: automatic)",
+    )
     build.set_defaults(handler=command_build)
 
-    assemble_parser = commands.add_parser("assemble", help="pack the staged tools into the release zip")
+    assemble_parser = commands.add_parser(
+        "assemble", help="pack the staged tools into the release zip"
+    )
     assemble_parser.add_argument("--platform", help=platform_help)
     assemble_parser.set_defaults(handler=command_assemble)
 
-    smoke = commands.add_parser("smoke", help="run the smoke tests against the release zip")
+    smoke = commands.add_parser(
+        "smoke", help="run the smoke tests against the release zip"
+    )
     smoke.add_argument("--platform", help=platform_help)
     smoke.add_argument("--zip", help="zip to test (default: the one assemble writes)")
     smoke.set_defaults(handler=command_smoke)

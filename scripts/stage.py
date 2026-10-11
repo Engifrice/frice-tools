@@ -4,6 +4,9 @@ The stage directory is exactly what goes into the zip under <tool>/. Each
 strategy fills it from the tool's source; the license texts from the tool's
 LICENSES/ folder are added last.
 
+The repackage strategy extracts only the files its pick patterns select,
+directly into the stage directory, in one pass over the archive.
+
 Strategies implemented so far: repackage.
 """
 
@@ -21,10 +24,6 @@ from fetch import fetch
 
 class StageError(Exception):
     """A tool could not be staged."""
-
-
-def work_dir(build_dir: Path, platform: str, tool: str) -> Path:
-    return build_dir / platform / "work" / tool
 
 
 def stage_dir(build_dir: Path, platform: str, tool: str) -> Path:
@@ -67,57 +66,67 @@ def glob_regex(pattern: str) -> re.Pattern[str]:
     return re.compile("".join(out) + r"\Z")
 
 
-def _tree(root: Path) -> list[PurePosixPath]:
-    """Every file and directory below root, as relative paths, sorted."""
-    return sorted(PurePosixPath(p.relative_to(root).as_posix()) for p in root.rglob("*"))
+class Picker:
+    """The select callback for extraction: decides, per member, whether it ships and where.
 
-
-def pick(source_root: Path, patterns: list[str]) -> list[PurePosixPath]:
-    """Paths matched by the patterns; a matched directory brings everything inside it.
-
-    Every pattern must match something, so an upstream layout change fails
-    the build instead of silently shipping less.
+    A member is picked when a pattern matches its path or one of its parent
+    directories, so a pattern naming a directory picks everything inside it.
+    With flatten, the matched file or directory lands at the stage root under
+    its own name; otherwise the archive layout is kept.
     """
-    entries = _tree(source_root)
-    matched: set[PurePosixPath] = set()
-    for pattern in patterns:
-        regex = glob_regex(pattern)
-        hits = [entry for entry in entries if regex.match(entry.as_posix())]
-        if not hits:
-            top = ", ".join(sorted(p.name for p in source_root.iterdir())) or "(empty)"
-            raise StageError(f"pick pattern {pattern!r} matches nothing; the archive's top level holds: {top}")
-        matched.update(hits)
-    # Drop entries already covered by a matched parent directory.
-    return sorted(entry for entry in matched if not any(parent in matched for parent in entry.parents))
+
+    def __init__(self, patterns: list[str], flatten: bool):
+        self.patterns = [(pattern, glob_regex(pattern)) for pattern in patterns]
+        self.flatten = flatten
+        self.used: set[str] = set()
+        self.top_level: set[str] = set()
+        self._matches: dict[str, tuple[str, ...]] = {}
+        self._sources: dict[PurePosixPath, PurePosixPath] = {}
+
+    def _patterns_matching(self, prefix: str) -> tuple[str, ...]:
+        found = self._matches.get(prefix)
+        if found is None:
+            found = tuple(
+                pattern for pattern, regex in self.patterns if regex.match(prefix)
+            )
+            self._matches[prefix] = found
+        return found
+
+    def __call__(self, path: PurePosixPath, is_dir: bool) -> PurePosixPath | None:
+        parts = path.parts
+        self.top_level.add(parts[0])
+        target = None
+        # Check every prefix, so each pattern is marked used even when a
+        # shorter prefix already picked the member.
+        for depth in range(1, len(parts) + 1):
+            found = self._patterns_matching("/".join(parts[:depth]))
+            if found:
+                self.used.update(found)
+                if target is None:
+                    target = (
+                        PurePosixPath(*parts[depth - 1 :]) if self.flatten else path
+                    )
+        if target is not None and not is_dir:
+            source = self._sources.setdefault(target, path)
+            if source != path:
+                raise StageError(
+                    f"{target}: picked more than once into the same place ({source} and {path})"
+                )
+        return target
+
+    def check(self) -> None:
+        """Fail if a pattern matched nothing; call after extraction."""
+        for pattern, _ in self.patterns:
+            if pattern not in self.used:
+                top = ", ".join(sorted(self.top_level)) or "(empty)"
+                raise StageError(
+                    f"pick pattern {pattern!r} matches nothing; the archive's top level holds: {top}"
+                )
 
 
-def _copy(source: Path, target: Path) -> None:
-    if target.exists():
-        raise StageError(f"{target.name}: picked more than once into the same place")
-    if source.is_dir():
-        shutil.copytree(source, target, copy_function=shutil.copyfile)
-        for path in [target, *target.rglob("*")]:
-            original = source / path.relative_to(target)
-            path.chmod(original.stat().st_mode & 0o777)
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        target.chmod(source.stat().st_mode & 0o777)
-
-
-# Strategies -----------------------------------------------------------------------
-
-
-def _repackage(tool: Tool, build: dict, source_root: Path, stage: Path) -> None:
-    if "pick" not in build:
-        raise StageError("strategy 'repackage' needs 'pick'")
-    flatten = build.get("flatten", False)
-    for relative in pick(source_root, build["pick"]):
-        destination = PurePosixPath(relative.name) if flatten else relative
-        _copy(source_root / relative, stage / destination)
-
-
-def stage_tool(tool: Tool, platform: str, build_dir: Path, cache_dir: Path, *, log=print) -> Path:
+def stage_tool(
+    tool: Tool, platform: str, build_dir: Path, cache_dir: Path, *, log=print
+) -> Path:
     """Stage one tool for one platform and return its stage directory."""
     spec = tool.spec
     if platform not in spec["platforms"]:
@@ -134,19 +143,22 @@ def stage_tool(tool: Tool, platform: str, build_dir: Path, cache_dir: Path, *, l
     if source is None or "url" not in source:
         raise StageError(f"strategy 'repackage' needs a url source for {platform}")
 
-    work = work_dir(build_dir, platform, tool.name)
+    if "pick" not in build:
+        raise StageError("strategy 'repackage' needs 'pick'")
+
     stage = stage_dir(build_dir, platform, tool.name)
-    for directory in (work, stage):
-        if directory.exists():
-            shutil.rmtree(directory)
-    stage.mkdir(parents=True)
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.parent.mkdir(parents=True, exist_ok=True)
 
     downloaded = fetch(source["url"], source["sha256"], cache_dir, log=log)
-    source_root = work / "src"
-    links = extract(downloaded, source_root, source.get("strip_components", 0))
+    picker = Picker(build["pick"], build.get("flatten", False))
+    links = extract(downloaded, stage, source.get("strip_components", 0), picker)
+    picker.check()
     if links:
-        log(f"skipped {len(links)} symbolic link{'s' if len(links) != 1 else ''} in the archive")
-    _repackage(tool, build, source_root, stage)
+        log(
+            f"skipped {len(links)} symbolic link{'s' if len(links) != 1 else ''} in the archive"
+        )
 
     licenses = visible_files(tool.directory / LICENSES_DIR)
     if not licenses:
@@ -159,5 +171,5 @@ def stage_tool(tool: Tool, platform: str, build_dir: Path, cache_dir: Path, *, l
         shutil.copyfile(license_file, target / license_file.name)
         (target / license_file.name).chmod(0o644)
 
-    log(f"staged {tool.name} for {platform}")
+    log(f"staged for {platform}")
     return stage

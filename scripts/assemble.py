@@ -5,6 +5,9 @@ timestamp is 1980-01-01, permissions are set by rule rather than copied, and
 there are no directory entries. Packing the same staged files twice with the
 same Python gives the same bytes.
 
+Entries use deflate level 6, zlib's default: on CMake it is 2.4 times faster
+than level 9 for a zip 0.4% larger.
+
 Permission rule: on Windows platforms, .exe and .dll files are 0755. On other
 platforms, declared executables and libraries, and files that were executable
 in the upstream archive, are 0755. Everything else is 0644.
@@ -27,6 +30,7 @@ from stage import stage_dir
 MANIFEST = "manifest.json"
 MANIFEST_SCHEMA = 1
 ZIP_DATE = (1980, 1, 1, 0, 0, 0)
+ZIP_LEVEL = 6
 WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".dll")
 
 
@@ -71,19 +75,26 @@ def tool_entry(tool: Tool, platform_info: dict) -> dict:
     }
 
 
-def build_manifest(tools: list[Tool], version: str, platform: str, platform_info: dict) -> dict:
+def build_manifest(
+    tools: list[Tool], version: str, platform: str, platform_info: dict
+) -> dict:
     return {
         "schema": MANIFEST_SCHEMA,
         "toolset": version,
         "platform": platform,
-        "tools": {tool.name: tool_entry(tool, platform_info) for tool in sorted(tools, key=lambda t: t.name)},
+        "tools": {
+            tool.name: tool_entry(tool, platform_info)
+            for tool in sorted(tools, key=lambda t: t.name)
+        },
     }
 
 
 def _collect(tool: Tool, stage: Path) -> list[tuple[str, Path]]:
     """(archive path, file) for every file staged for one tool."""
     if not stage.is_dir():
-        raise AssembleError(f"{tool.name}: nothing staged at {stage}; run the build first")
+        raise AssembleError(
+            f"{tool.name}: nothing staged at {stage}; run the build first"
+        )
     entries = []
     for path in sorted(stage.rglob("*")):
         relative = path.relative_to(stage).as_posix()
@@ -95,7 +106,9 @@ def _collect(tool: Tool, stage: Path) -> list[tuple[str, Path]]:
             raise AssembleError(f"{tool.name}: {relative} is not a regular file")
         name = f"{tool.name}/{relative}"
         if not ARCHIVE_PATH_RE.match(name):
-            raise AssembleError(f"{tool.name}: {relative} has characters not allowed in archive paths")
+            raise AssembleError(
+                f"{tool.name}: {relative} has characters not allowed in archive paths"
+            )
         entries.append((name, path))
     return entries
 
@@ -139,7 +152,9 @@ def assemble(
         for kind in ("executables", "libraries"):
             for key, name in entry[kind].items():
                 if name not in names:
-                    raise AssembleError(f"{tool.name}: {kind} '{key}' points to {name}, which was not staged")
+                    raise AssembleError(
+                        f"{tool.name}: {kind} '{key}' points to {name}, which was not staged"
+                    )
                 declared.add(name)
         entries.extend(files)
     entries.sort(key=lambda item: item[0])
@@ -147,16 +162,22 @@ def assemble(
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / zip_name(version, platform)
     partial = target.with_name(target.name + ".partial")
-    manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("ascii")
+    manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(
+        "ascii"
+    )
     with zipfile.ZipFile(partial, "w") as archive:
-        archive.writestr(_info(MANIFEST, 0o644), manifest_bytes, compresslevel=9)
+        archive.writestr(
+            _info(MANIFEST, 0o644), manifest_bytes, compresslevel=ZIP_LEVEL
+        )
         for name, path in entries:
             info = _info(name, _mode(name, path, platform_info, declared))
-            archive.writestr(info, path.read_bytes(), compresslevel=9)
+            archive.writestr(info, path.read_bytes(), compresslevel=ZIP_LEVEL)
     os.replace(partial, target)
 
     data = target.read_bytes()
     result = Assembled(target, len(data), hashlib.sha256(data).hexdigest())
-    log(f"wrote {target.name}: {len(shipped)} tools, {len(entries) + 1} files, {result.size} bytes")
+    log(
+        f"wrote {target.name}: {len(shipped)} tools, {len(entries) + 1} files, {result.size} bytes"
+    )
     log(f"sha256 {result.sha256}")
     return result

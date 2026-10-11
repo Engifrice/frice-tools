@@ -8,6 +8,10 @@ Symbolic links are never created: they are skipped and reported, so nothing
 shipped can depend on one, and a link can never point outside the
 destination. Tar hard links are written as ordinary copies of their target.
 
+A select callback can choose which members to write and where, so callers
+extract only what they need in a single pass over the archive. Every member
+is still checked, whether it is written or not.
+
 Unix permissions are kept only as "executable or not": extracted files are
 0755 when the archive marks any execute bit, 0644 otherwise.
 """
@@ -17,6 +21,7 @@ from __future__ import annotations
 import stat
 import tarfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 MAGIC_ZIP = b"PK\x03\x04"
@@ -26,6 +31,14 @@ MAGIC_XZ = b"\xfd7zXZ\x00"
 
 class ArchiveError(Exception):
     """The archive is unsupported or contains something unsafe."""
+
+
+# select(path, is_dir) -> where to write the member below dest, or None to skip it.
+Select = Callable[[PurePosixPath, bool], "PurePosixPath | None"]
+
+
+def select_all(path: PurePosixPath, is_dir: bool) -> PurePosixPath:
+    return path
 
 
 def detect_format(path: Path) -> str:
@@ -52,7 +65,9 @@ def _member_path(name: str, strip: int, is_dir: bool) -> PurePosixPath | None:
     if len(parts) <= strip:
         if is_dir:
             return None
-        raise ArchiveError(f"member {name!r}: a file above the {strip} stripped directory level(s)")
+        raise ArchiveError(
+            f"member {name!r}: a file above the {strip} stripped directory level(s)"
+        )
     return PurePosixPath(*parts[strip:])
 
 
@@ -83,30 +98,44 @@ class _Writer:
         target.chmod(0o755 if executable else 0o644)
 
 
-def _extract_zip(path: Path, writer: _Writer, strip: int, skipped: list[str]) -> None:
+def _extract_zip(
+    path: Path, writer: _Writer, strip: int, select: Select, skipped: list[str]
+) -> None:
     with zipfile.ZipFile(path) as archive:
         for info in archive.infolist():
             # On Windows, zipfile turns backslashes into '/' in info.filename; check
             # the name as stored so every host accepts and rejects the same archives.
             name = info.orig_filename
             mode = info.external_attr >> 16 if info.create_system == 3 else 0
-            kind = stat.S_IFMT(mode)  # 0 when the tool that made the zip left the type out
+            kind = stat.S_IFMT(
+                mode
+            )  # 0 when the tool that made the zip left the type out
             if kind == stat.S_IFLNK:
                 skipped.append(name)
                 continue
             relative = _member_path(name, strip, info.is_dir())
+            if not info.is_dir() and kind not in (0, stat.S_IFREG):
+                raise ArchiveError(f"member {name!r}: not a regular file")
             if relative is None:
                 continue
-            if info.is_dir():
-                writer.directory(relative)
+            target = select(relative, info.is_dir())
+            if target is None:
                 continue
-            if kind not in (0, stat.S_IFREG):
-                raise ArchiveError(f"member {name!r}: not a regular file")
+            if info.is_dir():
+                writer.directory(target)
+                continue
             with archive.open(info) as source:
-                writer.file(relative, source, executable=bool(mode & 0o111))
+                writer.file(target, source, executable=bool(mode & 0o111))
 
 
-def _extract_tar(path: Path, writer: _Writer, strip: int, compression: str, skipped: list[str]) -> None:
+def _extract_tar(
+    path: Path,
+    writer: _Writer,
+    strip: int,
+    compression: str,
+    select: Select,
+    skipped: list[str],
+) -> None:
     with tarfile.open(path, f"r:{compression}") as archive:
         for member in archive:
             if member.issym():
@@ -114,25 +143,38 @@ def _extract_tar(path: Path, writer: _Writer, strip: int, compression: str, skip
                 continue
             relative = _member_path(member.name, strip, member.isdir())
             if not (member.isfile() or member.isdir() or member.islnk()):
-                raise ArchiveError(f"member {member.name!r}: not a regular file or directory")
+                raise ArchiveError(
+                    f"member {member.name!r}: not a regular file or directory"
+                )
             if relative is None:
                 continue
+            target = select(relative, member.isdir())
+            if target is None:
+                continue
             if member.isdir():
-                writer.directory(relative)
+                writer.directory(target)
                 continue
             try:
-                source = archive.extractfile(member)  # a hard link yields its target's data
+                source = archive.extractfile(
+                    member
+                )  # a hard link yields its target's data
             except KeyError as error:
-                raise ArchiveError(f"member {member.name!r}: hard link to a missing member") from error
+                raise ArchiveError(
+                    f"member {member.name!r}: hard link to a missing member"
+                ) from error
             assert source is not None
             with source:
-                writer.file(relative, source, executable=bool(member.mode & 0o111))
+                writer.file(target, source, executable=bool(member.mode & 0o111))
 
 
-def extract(path: Path, dest: Path, strip_components: int = 0) -> list[str]:
+def extract(
+    path: Path, dest: Path, strip_components: int = 0, select: Select = select_all
+) -> list[str]:
     """Extract the archive at path into dest, which must not exist yet.
 
-    Returns the names of the symbolic links that were skipped.
+    select receives each member's path (after strip_components) and returns
+    where to write it below dest, or None to leave it out. Returns the names
+    of the symbolic links that were skipped.
     """
     if dest.exists():
         raise ArchiveError(f"{dest}: already exists")
@@ -142,9 +184,11 @@ def extract(path: Path, dest: Path, strip_components: int = 0) -> list[str]:
     kind = detect_format(path)
     try:
         if kind == "zip":
-            _extract_zip(path, writer, strip_components, skipped)
+            _extract_zip(path, writer, strip_components, select, skipped)
         else:
-            _extract_tar(path, writer, strip_components, kind.split(".")[1], skipped)
+            _extract_tar(
+                path, writer, strip_components, kind.split(".")[1], select, skipped
+            )
     except (zipfile.BadZipFile, tarfile.TarError, EOFError) as error:
         raise ArchiveError(f"{path}: corrupt archive: {error}") from error
     return skipped
