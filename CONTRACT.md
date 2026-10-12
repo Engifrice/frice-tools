@@ -109,8 +109,8 @@ finds every file through `manifest.json` and never builds a path itself.
     "renderdoc": {
       "version": "1.46",
       "upstream_version": "v1.46",
-      "executables": { "ui": "renderdoc/qrenderdoc", "cmd": "renderdoc/renderdoccmd" },
-      "libraries": { "capture": "renderdoc/librenderdoc.so" }
+      "executables": { "qrenderdoc": "renderdoc/bin/qrenderdoc", "renderdoccmd": "renderdoc/bin/renderdoccmd" },
+      "libraries": { "capture": "renderdoc/lib/librenderdoc.so" }
     }
   }
 }
