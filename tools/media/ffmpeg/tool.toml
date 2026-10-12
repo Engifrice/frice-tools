@@ -10,7 +10,8 @@
 # man pages and documentation are left out.
 #
 # macOS: Martin Riedl's static, signed GPL builds of exactly 9.0.2, one zip per
-# program.
+# program. Each program is picked wherever it sits in its zip (at the root
+# or below one folder).
 #
 # Linux loads its libraries through their sonames (libavcodec.so.63 and so
 # on), which the archives store as symbolic links; picking them by name ships
@@ -19,12 +20,13 @@
 #
 # Every platform: x264, x265, SVT-AV1, dav1d and Opus. Windows and Linux also:
 # CUDA and NVENC/NVDEC, Vulkan, libplacebo, OpenCL and AMF. Not on Windows
-# arm64: libvpx (VP9) and libaom. macOS: VideoToolbox.
+# arm64: libvpx (VP9) and libaom. macOS: libvpx, libaom and VideoToolbox (which
+# FFmpeg enables on its own on macOS; a smoke test checks it).
 #
-# GPL: before publishing a release that contains this tool, the corresponding
-# source (FFmpeg, every library linked in, and the build scripts) has to be
-# published with it as frice-tools-<version>-src-ffmpeg.tar.xz. That bundle is
-# made by the release workflow, which does not exist yet.
+# GPL: LICENSES/SOURCE.md ships next to the binaries and says where their
+# corresponding source is (the builders' scripts at the exact commits, which
+# pin every library, and FFmpeg itself). Update it with every FFmpeg update,
+# and whenever one of its links stops working.
 
 schema           = 1
 name             = "ffmpeg"
@@ -56,6 +58,7 @@ url              = "https://github.com/BtbN/FFmpeg-Builds/releases/download/auto
 sha256           = "706ccdbc8b0537646345532713a9b6750c0a6258cc001ec1c0379754f0ae730a"
 strip_components = 1
 
+# Hashes match ffmpeg.zip.sha256 and ffprobe.zip.sha256 next to each zip.
 [[source.macos-arm64]]
 url    = "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
 sha256 = "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
