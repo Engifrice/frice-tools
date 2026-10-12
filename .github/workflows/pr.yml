@@ -65,7 +65,8 @@ jobs:
       - name: Prepare container
         if: matrix.container != ''
         run: |
-          dnf install -y --setopt=install_weak_deps=False python3.12 git-core
+          # libX11/libxcb: RenderDoc links them; every desktop has them, the container does not.
+          dnf install -y --setopt=install_weak_deps=False python3.12 git-core libX11 libX11-xcb libxcb
           ln -sf /usr/bin/python3.12 /usr/local/bin/python
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
