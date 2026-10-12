@@ -1,0 +1,85 @@
+# RenderDoc: the official release builds, repackaged. Only Windows x64 and
+# Linux x64 builds exist (no arm64 builds, no Metal support on macOS), so the
+# tool is absent from the other zips.
+#
+# The editor runs qrenderdoc (the UI) and renderdoccmd (capture from the
+# command line), and may load the capture library into the game itself.
+#
+# Ships the programs, the capture library, Qt and Python (bundled DLLs on
+# Windows; built into qrenderdoc on Linux, with the Python standard library
+# under share/renderdoc/pylibs), and the plugins (AMD counters and ISA, SPIR-V
+# tools, D3D12 dxcompiler, Android capture).
+# Left out: the 32-bit Windows capture support (x86/, for 32-bit programs),
+# documentation, the old renderdocui.exe launcher, the header (the engine
+# keeps its own copy of renderdoc_app.h), Linux desktop integration files and
+# the Linux Vulkan layer manifest (etc/vulkan/implicit_layer.d), whose
+# library_path is the absolute path of the build machine
+# (/io/dist/lib/librenderdoc.so) and so never works once extracted.
+#
+# Vulkan layer: the Windows manifest (bin/renderdoc.json) points to
+# .\renderdoc.dll next to itself, so it works wherever the zip is extracted
+# once it is registered. On Linux, "renderdoccmd vulkanlayer --register --user"
+# (or qrenderdoc's prompt on first launch) writes a manifest with the right
+# path.
+#
+# Layout: Windows keeps everything together under bin/ (qrenderdoc finds its
+# DLLs, Qt plugins and RenderDoc plugins next to itself). Linux keeps the
+# archive's bin/, lib/ and share/renderdoc/ folders, so the capture library
+# is lib/librenderdoc.so.
+#
+# Qt and PySide2 are LGPL; LICENSES/SOURCE.md says where their source and
+# RenderDoc's are.
+
+schema           = 1
+name             = "renderdoc"
+description      = "Graphics debugger: frame capture and inspection for Vulkan, D3D11, D3D12 and OpenGL."
+homepage         = "https://renderdoc.org/"
+version          = "1.46"
+upstream_version = "v1.46"
+license          = ["MIT", "LGPL-2.1-only", "PSF-2.0", "OpenSSL", "BSD-3-Clause", "Apache-2.0"]
+platforms        = ["windows-x86_64", "linux-x86_64"]
+
+[source.windows-x86_64]
+url              = "https://renderdoc.org/stable/1.46/RenderDoc_1.46_64.zip"
+sha256           = "9ca4d09ecaba2cc791168660d6fc2a7e3d70fe67146e87ec05c5f8dea70772f7"
+strip_components = 1
+
+[source.linux-x86_64]
+url              = "https://renderdoc.org/stable/1.46/renderdoc_1.46.tar.gz"
+sha256           = "6fedf15eab1288d9a81889ba8a4452dca53f5c10de8162be32a0f8972f62dc09"
+strip_components = 1
+
+[build]
+strategy = "repackage"
+
+[build.windows]
+pick = [
+    "qrenderdoc.exe",
+    "renderdoccmd.exe",
+    "*.dll",
+    "*.pyd",
+    "python38.zip",
+    "renderdoc.json",
+    "symsrv.yes",
+    "PySide2",
+    "shiboken2",
+    "qtplugins",
+    "plugins",
+]
+into = "bin"
+
+[build.linux]
+pick = ["bin", "lib", "share/renderdoc"]
+
+[executables]
+qrenderdoc   = "bin/qrenderdoc"
+renderdoccmd = "bin/renderdoccmd"
+
+# The engine loads this itself for in-application capture.
+[libraries]
+capture = { windows = "bin/renderdoc", linux = "lib/renderdoc" }
+
+[[smoke]]
+entrypoint    = "renderdoccmd"
+args          = ["version"]
+expect_output = "v1.46"
