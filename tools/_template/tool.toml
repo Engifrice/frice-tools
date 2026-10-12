@@ -37,6 +37,8 @@ flatten  = true                # drop the archive's folders
 "@NAME@" = "@NAME@"
 
 # Shared libraries the engine may load, without the platform's prefix and suffix.
+# An entry here or in [executables] can also be a table of paths per OS or per
+# platform, when the layout differs: capture = { windows = "bin/x", linux = "lib/x" }
 # [libraries]
 # capture = "example"
 
