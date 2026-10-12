@@ -85,7 +85,9 @@ def check_platforms(data: dict, report: _Reporter) -> dict[str, dict]:
         where = f"platforms.{token}"
         match = PLATFORM_RE.match(token)
         if not match:
-            report(f"{where}: '{token}' is not <os>-<isa> with os in windows|linux|macos and isa in x86_64|arm64")
+            report(
+                f"{where}: '{token}' is not <os>-<isa> with os in windows|linux|macos and isa in x86_64|arm64"
+            )
             continue
         if not isinstance(entry, dict):
             report(f"{where}: must be a table")
@@ -104,10 +106,10 @@ def check_platforms(data: dict, report: _Reporter) -> dict[str, dict]:
                 ok = False
         os_name, isa = match.group(1), match.group(2)
         if isinstance(entry.get("os"), str) and entry["os"] != os_name:
-            report(f"{where}.os: must be \"{os_name}\" to match the token")
+            report(f'{where}.os: must be "{os_name}" to match the token')
             ok = False
         if isinstance(entry.get("isa"), str) and entry["isa"] != isa:
-            report(f"{where}.isa: must be \"{isa}\" to match the token")
+            report(f'{where}.isa: must be "{isa}" to match the token')
             ok = False
         for key in ("runner", "container"):
             if entry.get(key) == "":
@@ -130,7 +132,9 @@ def check_toolset(data: dict, report: _Reporter) -> list[str]:
 
     version = data.get("version")
     if not isinstance(version, str) or not TOOLSET_VERSION_RE.match(version):
-        report(f"version must be YYYY.MM.N (for example \"2026.10.0\"), found {version!r}")
+        report(
+            f'version must be YYYY.MM.N (for example "2026.10.0"), found {version!r}'
+        )
 
     removed = data.get("removed", [])
     if not isinstance(removed, list):
@@ -162,7 +166,16 @@ def source_tables(spec: dict) -> list[tuple[str, dict]]:
         return []
     if is_single_source(source):
         return [("source", source)]
-    return [(f"source.{key}", source[key]) for key in sorted(source)]
+    tables = []
+    for key in sorted(source):
+        value = source[key]
+        if isinstance(value, list):
+            tables.extend(
+                (f"source.{key}[{index}]", table) for index, table in enumerate(value)
+            )
+        else:
+            tables.append((f"source.{key}", value))
+    return tables
 
 
 def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> None:
@@ -190,7 +203,9 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
                 report(f"source.{key}: source for a platform the tool does not declare")
     for where, table in source_tables(spec):
         if table.get("sha256") == ZERO_SHA256:
-            report(f"{where}.sha256: placeholder hash; set the real sha256 of the download")
+            report(
+                f"{where}.sha256: placeholder hash; set the real sha256 of the download"
+            )
         if ("sig_url" in table) != ("pgp_fingerprint" in table):
             report(f"{where}: sig_url and pgp_fingerprint must be given together")
 
@@ -202,26 +217,36 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
         strategies[token] = strategy
         if strategy == "script":
             continue
-        has_source = source is not None and (is_single_source(source) or token in source)
+        has_source = source is not None and (
+            is_single_source(source) or token in source
+        )
         if not has_source:
-            report(f"source: no source for {token} (strategy \"{strategy}\")")
+            report(f'source: no source for {token} (strategy "{strategy}")')
         if strategy == "repackage" and "pick" not in build:
-            report(f"build: strategy \"repackage\" on {token} needs 'pick' to choose the shipped files")
+            report(
+                f"build: strategy \"repackage\" on {token} needs 'pick' to choose the shipped files"
+            )
 
     has_script = (tool.directory / BUILD_SCRIPT).is_file()
     uses_script = sorted(t for t, s in strategies.items() if s == "script")
     if uses_script and not has_script:
-        report(f"build: strategy \"script\" on {', '.join(uses_script)} needs {BUILD_SCRIPT} next to tool.toml")
+        report(
+            f"build: strategy \"script\" on {', '.join(uses_script)} needs {BUILD_SCRIPT} next to tool.toml"
+        )
     if has_script and not uses_script:
-        report(f"{BUILD_SCRIPT} exists but no platform uses strategy \"script\"")
+        report(f'{BUILD_SCRIPT} exists but no platform uses strategy "script"')
 
     # License texts.
     licenses = tool.directory / LICENSES_DIR
     if not licenses.is_dir():
-        report(f"{LICENSES_DIR}/ is missing; add the license texts of everything the tool ships")
+        report(
+            f"{LICENSES_DIR}/ is missing; add the license texts of everything the tool ships"
+        )
     else:
         if not visible_files(licenses):
-            report(f"{LICENSES_DIR}/ is empty; add the license texts of everything the tool ships")
+            report(
+                f"{LICENSES_DIR}/ is empty; add the license texts of everything the tool ships"
+            )
         for entry in sorted(licenses.iterdir()):
             if entry.is_dir():
                 report(f"{LICENSES_DIR}/{entry.name}: subdirectories are not allowed")
@@ -236,18 +261,29 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
     for index, smoke in enumerate(spec.get("smoke", [])):
         where = f"smoke[{index}]"
         if smoke["entrypoint"] not in executables:
-            report(f"{where}.entrypoint: '{smoke['entrypoint']}' is not a key of [executables]")
+            report(
+                f"{where}.entrypoint: '{smoke['entrypoint']}' is not a key of [executables]"
+            )
         for token in smoke.get("platforms", []):
             if token not in declared:
-                report(f"{where}.platforms: '{token}' is not one of the tool's platforms")
+                report(
+                    f"{where}.platforms: '{token}' is not one of the tool's platforms"
+                )
         for arg_index, arg in enumerate(smoke.get("args", [])):
             for placeholder in PLACEHOLDER_RE.findall(arg):
                 if placeholder not in SMOKE_PLACEHOLDERS:
                     allowed = ", ".join("{" + p + "}" for p in SMOKE_PLACEHOLDERS)
-                    report(f"{where}.args[{arg_index}]: unknown placeholder {{{placeholder}}} (allowed: {allowed})")
+                    report(
+                        f"{where}.args[{arg_index}]: unknown placeholder {{{placeholder}}} (allowed: {allowed})"
+                    )
             for relative in SMOKE_FILE_RE.findall(arg):
-                if ".." in relative.split("/") or not (tool.directory / SMOKE_DIR / relative).is_file():
-                    report(f"{where}.args[{arg_index}]: {SMOKE_DIR}/{relative} not found next to tool.toml")
+                if (
+                    ".." in relative.split("/")
+                    or not (tool.directory / SMOKE_DIR / relative).is_file()
+                ):
+                    report(
+                        f"{where}.args[{arg_index}]: {SMOKE_DIR}/{relative} not found next to tool.toml"
+                    )
 
 
 def check_dependencies(tool: Tool, by_name: dict[str, Tool], report: _Reporter) -> None:
@@ -260,7 +296,9 @@ def check_dependencies(tool: Tool, by_name: dict[str, Tool], report: _Reporter) 
             report(f"{where}: a tool cannot depend on itself")
             continue
         if "libraries" not in entry and "executables" not in entry:
-            report(f"{where}: name the 'libraries' or 'executables' of '{name}' to copy")
+            report(
+                f"{where}: name the 'libraries' or 'executables' of '{name}' to copy"
+            )
         dependency = by_name.get(name)
         if dependency is None:
             report(f"{where}: unknown tool '{name}'")
@@ -272,7 +310,9 @@ def check_dependencies(tool: Tool, by_name: dict[str, Tool], report: _Reporter) 
             available = dependency.spec.get(kind, {})
             for key in entry.get(kind, []):
                 if key not in available:
-                    report(f"{where}.{kind}: '{key}' is not a key of [{kind}] in '{name}'")
+                    report(
+                        f"{where}.{kind}: '{key}' is not a key of [{kind}] in '{name}'"
+                    )
 
 
 # Repository -------------------------------------------------------------------
@@ -322,7 +362,11 @@ def lint_repo(root: Path) -> tuple[list[Tool], list[Problem]]:
 
     for name in removed:
         if any(tool.name == name for tool in tools):
-            problems.append(Problem(TOOLSET_FILE, f"removed: '{name}' is still present under tools/"))
+            problems.append(
+                Problem(
+                    TOOLSET_FILE, f"removed: '{name}' is still present under tools/"
+                )
+            )
 
     _, cycle_problems = order_by_dependencies(valid, root)
     problems.extend(cycle_problems)

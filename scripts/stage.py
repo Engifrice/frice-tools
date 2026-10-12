@@ -16,7 +16,7 @@ import re
 import shutil
 from pathlib import Path, PurePosixPath
 
-from archive import extract
+from archive import LINK, extract
 from common import LICENSES_DIR, effective_build, visible_files
 from discover import Tool
 from fetch import fetch
@@ -30,14 +30,15 @@ def stage_dir(build_dir: Path, platform: str, tool: str) -> Path:
     return build_dir / platform / "stage" / tool
 
 
-def source_for(spec: dict, platform: str) -> dict | None:
-    """The source table used on this platform, or None."""
+def sources_for(spec: dict, platform: str) -> list[dict]:
+    """The source tables used on this platform: one, several, or none."""
     source = spec.get("source")
     if source is None:
-        return None
+        return []
     if "url" in source or "git" in source:
-        return source
-    return source.get(platform)
+        return [source]
+    tables = source.get(platform, [])
+    return tables if isinstance(tables, list) else [tables]
 
 
 # Pick patterns ------------------------------------------------------------------
@@ -72,12 +73,19 @@ class Picker:
     A member is picked when a pattern matches its path or one of its parent
     directories, so a pattern naming a directory picks everything inside it.
     With flatten, the matched file or directory lands at the stage root under
-    its own name; otherwise the archive layout is kept.
+    its own name; otherwise the archive layout is kept. With into, everything
+    lands below that folder instead of the stage root.
+
+    A symbolic link is picked only when a pattern matches its own path; it
+    then ships as a regular file with its target's content (Linux sonames
+    such as libavcodec.so.63). Links inside a picked directory are skipped.
+    One picker can serve several archives; check() then covers them all.
     """
 
-    def __init__(self, patterns: list[str], flatten: bool):
+    def __init__(self, patterns: list[str], flatten: bool, into: str = ""):
         self.patterns = [(pattern, glob_regex(pattern)) for pattern in patterns]
         self.flatten = flatten
+        self.into = PurePosixPath(into) if into else None
         self.used: set[str] = set()
         self.top_level: set[str] = set()
         self._matches: dict[str, tuple[str, ...]] = {}
@@ -92,9 +100,21 @@ class Picker:
             self._matches[prefix] = found
         return found
 
-    def __call__(self, path: PurePosixPath, is_dir: bool) -> PurePosixPath | None:
+    def __call__(self, path: PurePosixPath, kind: str) -> PurePosixPath | None:
         parts = path.parts
         self.top_level.add(parts[0])
+        if kind == LINK:
+            found = self._patterns_matching(path.as_posix())
+            if not found:
+                return None
+            self.used.update(found)
+            target = self._place(PurePosixPath(path.name) if self.flatten else path)
+            source = self._sources.setdefault(target, path)
+            if source != path:
+                raise StageError(
+                    f"{target}: picked more than once into the same place ({source} and {path})"
+                )
+            return target
         target = None
         # Check every prefix, so each pattern is marked used even when a
         # shorter prefix already picked the member.
@@ -103,10 +123,10 @@ class Picker:
             if found:
                 self.used.update(found)
                 if target is None:
-                    target = (
+                    target = self._place(
                         PurePosixPath(*parts[depth - 1 :]) if self.flatten else path
                     )
-        if target is not None and not is_dir:
+        if target is not None and kind != "dir":
             source = self._sources.setdefault(target, path)
             if source != path:
                 raise StageError(
@@ -114,13 +134,16 @@ class Picker:
                 )
         return target
 
+    def _place(self, target: PurePosixPath) -> PurePosixPath:
+        return self.into / target if self.into else target
+
     def check(self) -> None:
-        """Fail if a pattern matched nothing; call after extraction."""
+        """Fail if a pattern matched nothing; call after extracting every archive."""
         for pattern, _ in self.patterns:
             if pattern not in self.used:
                 top = ", ".join(sorted(self.top_level)) or "(empty)"
                 raise StageError(
-                    f"pick pattern {pattern!r} matches nothing; the archive's top level holds: {top}"
+                    f"pick pattern {pattern!r} matches nothing; the archives' top level holds: {top}"
                 )
 
 
@@ -139,9 +162,9 @@ def stage_tool(
     if strategy != "repackage":
         raise StageError(f"strategy '{strategy}' is not supported by the pipeline yet")
 
-    source = source_for(spec, platform)
-    if source is None or "url" not in source:
-        raise StageError(f"strategy 'repackage' needs a url source for {platform}")
+    sources = sources_for(spec, platform)
+    if not sources or any("url" not in source for source in sources):
+        raise StageError(f"strategy 'repackage' needs url sources for {platform}")
 
     if "pick" not in build:
         raise StageError("strategy 'repackage' needs 'pick'")
@@ -149,15 +172,27 @@ def stage_tool(
     stage = stage_dir(build_dir, platform, tool.name)
     if stage.exists():
         shutil.rmtree(stage)
-    stage.parent.mkdir(parents=True, exist_ok=True)
+    stage.mkdir(parents=True)
 
-    downloaded = fetch(source["url"], source["sha256"], cache_dir, log=log)
-    picker = Picker(build["pick"], build.get("flatten", False))
-    links = extract(downloaded, stage, source.get("strip_components", 0), picker)
+    # Several archives go into the same stage directory; a file in two of
+    # them is an error, and every pick pattern must match in at least one.
+    picker = Picker(build["pick"], build.get("flatten", False), build.get("into", ""))
+    skipped = shipped = 0
+    for source in sources:
+        downloaded = fetch(source["url"], source["sha256"], cache_dir, log=log)
+        result = extract(
+            downloaded, stage, source.get("strip_components", 0), picker, merge=True
+        )
+        skipped += len(result.skipped_links)
+        shipped += len(result.shipped_links)
     picker.check()
-    if links:
+    if shipped:
         log(
-            f"skipped {len(links)} symbolic link{'s' if len(links) != 1 else ''} in the archive"
+            f"shipped {shipped} picked symbolic link{'s' if shipped != 1 else ''} as files"
+        )
+    if skipped:
+        log(
+            f"skipped {skipped} symbolic link{'s' if skipped != 1 else ''} in the archive"
         )
 
     licenses = visible_files(tool.directory / LICENSES_DIR)
