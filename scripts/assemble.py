@@ -23,7 +23,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from common import ARCHIVE_PATH_RE
+from common import ARCHIVE_PATH_RE, entry_path
 from discover import Tool
 from stage import stage_dir
 
@@ -56,16 +56,28 @@ def library_path(path: str, platform_info: dict) -> str:
     return str(relative.with_name(name))
 
 
-def tool_entry(tool: Tool, platform_info: dict) -> dict:
+def tool_entry(tool: Tool, platform: str, platform_info: dict) -> dict:
     """The manifest entry of one tool, with paths relative to the zip root."""
     spec = tool.spec
+
+    def paths(kind: str) -> dict[str, str]:
+        found = {}
+        for key, value in sorted(spec.get(kind, {}).items()):
+            path = entry_path(value, platform)
+            if path is None:
+                raise AssembleError(
+                    f"{tool.name}: {kind} '{key}' has no path for {platform}"
+                )
+            found[key] = path
+        return found
+
     executables = {
         key: f"{tool.name}/{path}{platform_info['exe_suffix']}"
-        for key, path in sorted(spec.get("executables", {}).items())
+        for key, path in paths("executables").items()
     }
     libraries = {
         key: f"{tool.name}/{library_path(path, platform_info)}"
-        for key, path in sorted(spec.get("libraries", {}).items())
+        for key, path in paths("libraries").items()
     }
     return {
         "version": spec["version"],
@@ -83,7 +95,7 @@ def build_manifest(
         "toolset": version,
         "platform": platform,
         "tools": {
-            tool.name: tool_entry(tool, platform_info)
+            tool.name: tool_entry(tool, platform, platform_info)
             for tool in sorted(tools, key=lambda t: t.name)
         },
     }

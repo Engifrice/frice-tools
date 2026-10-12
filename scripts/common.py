@@ -73,9 +73,16 @@ def display_path(path: Path, root: Path) -> str:
 
 def host_platform() -> str | None:
     """The platform token of the machine running this script, or None if unknown."""
-    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}.get(platform.system())
+    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}.get(
+        platform.system()
+    )
     machine = platform.machine().lower()
-    isa = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "arm64", "aarch64": "arm64"}.get(machine)
+    isa = {
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+    }.get(machine)
     if system is None or isa is None:
         return None
     return f"{system}-{isa}"
@@ -85,7 +92,9 @@ def visible_files(directory: Path) -> list[Path]:
     """Regular files directly in directory whose names do not start with '.', sorted."""
     if not directory.is_dir():
         return []
-    return sorted(p for p in directory.iterdir() if p.is_file() and not p.name.startswith("."))
+    return sorted(
+        p for p in directory.iterdir() if p.is_file() and not p.name.startswith(".")
+    )
 
 
 def effective_build(spec: dict, platform: str) -> dict:
@@ -95,7 +104,11 @@ def effective_build(spec: dict, platform: str) -> dict:
     the value from before, except 'args', which are appended.
     """
     build = spec["build"]
-    merged = {key: value for key, value in build.items() if not (PLATFORM_RE.match(key) or OS_RE.match(key))}
+    merged = {
+        key: value
+        for key, value in build.items()
+        if not (PLATFORM_RE.match(key) or OS_RE.match(key))
+    }
     os_name = platform.split("-", 1)[0]
     for override in (build.get(os_name, {}), build.get(platform, {})):
         for key, value in override.items():
@@ -104,6 +117,17 @@ def effective_build(spec: dict, platform: str) -> dict:
             else:
                 merged[key] = value
     return merged
+
+
+def entry_path(value: str | dict, platform: str) -> str | None:
+    """The path of an [executables] or [libraries] entry on one platform.
+
+    An entry is one path, or a table of paths per OS or per platform; a
+    platform key wins over its OS key. None if the table has no path for it.
+    """
+    if isinstance(value, str):
+        return value
+    return value.get(platform, value.get(platform.split("-", 1)[0]))
 
 
 def load_toml(path: Path) -> dict:

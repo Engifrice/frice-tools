@@ -24,6 +24,7 @@ from common import (
     Problem,
     display_path,
     effective_build,
+    entry_path,
     load_toml,
     visible_files,
 )
@@ -262,6 +263,22 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
     libraries = spec.get("libraries", {})
     if not executables and not libraries:
         report("a tool must declare at least one entry in [executables] or [libraries]")
+    for kind, entries in (("executables", executables), ("libraries", libraries)):
+        for key, value in sorted(entries.items()):
+            if isinstance(value, str):
+                continue
+            for name in sorted(value):
+                if PLATFORM_RE.match(name) and name not in declared:
+                    report(
+                        f"{kind}.{key}.{name}: path for a platform the tool does not declare"
+                    )
+                elif OS_RE.match(name) and name not in declared_os:
+                    report(
+                        f"{kind}.{key}.{name}: path for an OS none of the tool's platforms use"
+                    )
+            missing = [token for token in declared if entry_path(value, token) is None]
+            if missing:
+                report(f"{kind}.{key}: no path for {', '.join(missing)}")
 
     # Smoke tests.
     for index, smoke in enumerate(spec.get("smoke", [])):

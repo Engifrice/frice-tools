@@ -250,7 +250,20 @@
       "minProperties": 1,
       "additionalProperties": false,
       "patternProperties": {
-        "^[a-z][a-z0-9_-]*$": { "$ref": "#/$defs/relPath" }
+        "^[a-z][a-z0-9_-]*$": {
+          "description": "One path for every platform, or a table of paths per OS (windows, linux, macos) or per platform; a platform entry wins over its OS.",
+          "oneOf": [
+            { "$ref": "#/$defs/relPath" },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": false,
+              "patternProperties": {
+                "^(windows|linux|macos)(-(x86_64|arm64))?$": { "$ref": "#/$defs/relPath" }
+              }
+            }
+          ]
+        }
       }
     },
     "smoke": {
