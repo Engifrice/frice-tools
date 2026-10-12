@@ -1,6 +1,12 @@
 # FFmpeg: prebuilt GPL builds, repackaged. The editor runs ffmpeg and ffprobe
 # as separate programs to convert assets.
 #
+# Not on Windows arm64 for now: BtbN's Windows arm64 builds from about
+# 2026-09-24 crash at startup (llvm-strip removed needed sections; BtbN issue
+# #675, fixed by commit 9acad4a9 on 2026-10-03). Add windows-arm64 back with
+# the first month-end build that has the fix (autobuild-2026-10-31-...), and
+# move the other BtbN platforms to that build at the same time.
+#
 # Windows and Linux: BtbN's "gpl-shared" builds from the n9.0 release branch
 # (autobuild-2026-09-30-13-08; BtbN keeps each month's last build for two
 # years). They report version n9.0.2-17-g2a571b6068: the 9.0.2 release plus 17
@@ -19,9 +25,9 @@
 # through RPATH $ORIGIN/../lib.
 #
 # Every platform: x264, x265, SVT-AV1, dav1d and Opus. Windows and Linux also:
-# CUDA and NVENC/NVDEC, Vulkan, libplacebo, OpenCL and AMF. Not on Windows
-# arm64: libvpx (VP9) and libaom. macOS: libvpx, libaom and VideoToolbox (which
-# FFmpeg enables on its own on macOS; a smoke test checks it).
+# CUDA and NVENC/NVDEC, Vulkan, libplacebo, OpenCL and AMF. macOS: libvpx,
+# libaom and VideoToolbox (which FFmpeg enables on its own on macOS; a smoke
+# test checks it).
 #
 # GPL: LICENSES/SOURCE.md ships next to the binaries and says where their
 # corresponding source is (the builders' scripts at the exact commits, which
@@ -35,17 +41,12 @@ homepage         = "https://ffmpeg.org/"
 version          = "9.0.2"
 upstream_version = "n9.0.2"
 license          = ["GPL-3.0-or-later"]
-platforms        = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64", "macos-arm64"]
+platforms        = ["windows-x86_64", "linux-x86_64", "linux-arm64", "macos-arm64"]
 
 # Hashes for BtbN builds match the SHA-256 digests on the release page.
 [source.windows-x86_64]
 url              = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-shared-9.0.zip"
 sha256           = "3da6c7b60bb9ccd73ec5b5e815ba804a0879eb362ba0e3beebce50174c022696"
-strip_components = 1
-
-[source.windows-arm64]
-url              = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-winarm64-gpl-shared-9.0.zip"
-sha256           = "92460cf103340012d41413b557669902538f040e0c953abc1d719750dcd5f8a8"
 strip_components = 1
 
 [source.linux-x86_64]
@@ -131,19 +132,19 @@ expect_output = "(libopus)"
 entrypoint    = "ffmpeg"
 args          = ["-hide_banner", "-encoders"]
 expect_output = "h264_nvenc"
-platforms     = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64"]
+platforms     = ["windows-x86_64", "linux-x86_64", "linux-arm64"]
 
 [[smoke]]
 entrypoint    = "ffmpeg"
 args          = ["-hide_banner", "-encoders"]
 expect_output = "h264_vulkan"
-platforms     = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64"]
+platforms     = ["windows-x86_64", "linux-x86_64", "linux-arm64"]
 
 [[smoke]]
 entrypoint    = "ffmpeg"
 args          = ["-hide_banner", "-filters"]
 expect_output = "libplacebo"
-platforms     = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64"]
+platforms     = ["windows-x86_64", "linux-x86_64", "linux-arm64"]
 
 [[smoke]]
 entrypoint    = "ffmpeg"

@@ -5,7 +5,7 @@ licensed under the GNU General Public License, version 3 or later (see
 COPYING.GPLv3 and LICENSE.md). Their complete corresponding source is
 available at the locations below.
 
-## Windows (x86_64, arm64) and Linux (x86_64, arm64)
+## Windows (x86_64) and Linux (x86_64, arm64)
 
 Built by BtbN/FFmpeg-Builds, release `autobuild-2026-09-30-13-08`, variant
 `gpl-shared`, FFmpeg release branch 9.0.
@@ -21,7 +21,7 @@ Built by BtbN/FFmpeg-Builds, release `autobuild-2026-09-30-13-08`, variant
   (branch `release/9.0`; `git describe`: `n9.0.2-17-g2a571b6`).
 
 To rebuild, at that commit of the build scripts, with `<target>` one of
-`win64`, `winarm64`, `linux64`, `linuxarm64`:
+`win64`, `linux64`, `linuxarm64`:
 
     ./makeimage.sh <target> gpl-shared 9.0
     ./build.sh <target> gpl-shared 9.0
