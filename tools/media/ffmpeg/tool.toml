@@ -1,0 +1,149 @@
+# FFmpeg: prebuilt GPL builds, repackaged. The editor runs ffmpeg and ffprobe
+# as separate programs to convert assets.
+#
+# Windows and Linux: BtbN's "gpl-shared" builds from the n9.0 release branch
+# (autobuild-2026-09-30-13-08; BtbN keeps each month's last build for two
+# years). They report version n9.0.2-17-g2a571b6068: the 9.0.2 release plus 17
+# fixes from the branch. The shared variant puts the codec libraries in
+# separate files used by both programs, instead of a copy inside each (75-81 MB
+# compressed instead of 128 MB). ffplay, headers, import libraries, presets,
+# man pages and documentation are left out.
+#
+# macOS: Martin Riedl's static, signed GPL builds of exactly 9.0.2, one zip per
+# program.
+#
+# Linux loads its libraries through their sonames (libavcodec.so.63 and so
+# on), which the archives store as symbolic links; picking them by name ships
+# each one as a regular file with the library's content. ffmpeg finds them
+# through RPATH $ORIGIN/../lib.
+#
+# Every platform: x264, x265, SVT-AV1, dav1d and Opus. Windows and Linux also:
+# CUDA and NVENC/NVDEC, Vulkan, libplacebo, OpenCL and AMF. Not on Windows
+# arm64: libvpx (VP9) and libaom. macOS: VideoToolbox.
+#
+# GPL: before publishing a release that contains this tool, the corresponding
+# source (FFmpeg, every library linked in, and the build scripts) has to be
+# published with it as frice-tools-<version>-src-ffmpeg.tar.xz. That bundle is
+# made by the release workflow, which does not exist yet.
+
+schema           = 1
+name             = "ffmpeg"
+description      = "Converts and inspects audio, video and image files (ffmpeg and ffprobe)."
+homepage         = "https://ffmpeg.org/"
+version          = "9.0.2"
+upstream_version = "n9.0.2"
+license          = ["GPL-3.0-or-later"]
+platforms        = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64", "macos-arm64"]
+
+# Hashes for BtbN builds match the SHA-256 digests on the release page.
+[source.windows-x86_64]
+url              = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-shared-9.0.zip"
+sha256           = "3da6c7b60bb9ccd73ec5b5e815ba804a0879eb362ba0e3beebce50174c022696"
+strip_components = 1
+
+[source.windows-arm64]
+url              = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-winarm64-gpl-shared-9.0.zip"
+sha256           = "92460cf103340012d41413b557669902538f040e0c953abc1d719750dcd5f8a8"
+strip_components = 1
+
+[source.linux-x86_64]
+url              = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-shared-9.0.tar.xz"
+sha256           = "01a9764d0b5364b66cfeb4617557c64321b0e232e172ec73f0a701c5f7694326"
+strip_components = 1
+
+[source.linux-arm64]
+url              = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-gpl-shared-9.0.tar.xz"
+sha256           = "706ccdbc8b0537646345532713a9b6750c0a6258cc001ec1c0379754f0ae730a"
+strip_components = 1
+
+[[source.macos-arm64]]
+url    = "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
+sha256 = "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
+
+[[source.macos-arm64]]
+url    = "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip"
+sha256 = "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6"
+
+[build]
+strategy = "repackage"
+
+[build.windows]
+pick = ["bin/ffmpeg.exe", "bin/ffprobe.exe", "bin/*.dll"]
+
+[build.linux]
+pick = [
+    "bin/ffmpeg",
+    "bin/ffprobe",
+    "lib/libavcodec.so.63",
+    "lib/libavdevice.so.63",
+    "lib/libavfilter.so.12",
+    "lib/libavformat.so.63",
+    "lib/libavutil.so.61",
+    "lib/libswresample.so.7",
+    "lib/libswscale.so.10",
+]
+
+[build.macos]
+pick    = ["**/ffmpeg", "**/ffprobe"]
+flatten = true
+into    = "bin"
+
+[executables]
+ffmpeg  = "bin/ffmpeg"
+ffprobe = "bin/ffprobe"
+
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-version"]
+expect_output = "--enable-gpl"
+
+[[smoke]]
+entrypoint    = "ffprobe"
+args          = ["-hide_banner", "-f", "lavfi", "testsrc2=duration=1"]
+expect_output = "Input #0, lavfi"
+
+# Encodes: a one-second test pattern or tone through each encoder.
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-f", "lavfi", "-i", "testsrc2=duration=1:size=128x72:rate=10", "-c:v", "libx264", "-f", "null", "-"]
+expect_output = "(libx264)"
+
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-f", "lavfi", "-i", "testsrc2=duration=1:size=128x72:rate=10", "-c:v", "libx265", "-f", "null", "-"]
+expect_output = "(libx265)"
+
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-f", "lavfi", "-i", "testsrc2=duration=1:size=128x72:rate=10", "-c:v", "libsvtav1", "-f", "null", "-"]
+expect_output = "(libsvtav1)"
+
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libopus", "-f", "null", "-"]
+expect_output = "(libopus)"
+
+# GPU support is listed, not run: CI runners have no GPU.
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-encoders"]
+expect_output = "h264_nvenc"
+platforms     = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64"]
+
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-encoders"]
+expect_output = "h264_vulkan"
+platforms     = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64"]
+
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-filters"]
+expect_output = "libplacebo"
+platforms     = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64"]
+
+[[smoke]]
+entrypoint    = "ffmpeg"
+args          = ["-hide_banner", "-encoders"]
+expect_output = "h264_videotoolbox"
+platforms     = ["macos-arm64"]

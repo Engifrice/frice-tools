@@ -171,7 +171,13 @@
       "minProperties": 1,
       "additionalProperties": false,
       "patternProperties": {
-        "^((windows|linux|macos)-(x86_64|arm64)|src)$": { "$ref": "#/$defs/source" }
+        "^((windows|linux|macos)-(x86_64|arm64)|src)$": {
+          "description": "One source, or several ([[source.<platform>]]) extracted into the same directory.",
+          "oneOf": [
+            { "$ref": "#/$defs/source" },
+            { "type": "array", "items": { "$ref": "#/$defs/source" }, "minItems": 1 }
+          ]
+        }
       }
     },
     "strategy": {
@@ -185,6 +191,10 @@
         "strategy": { "$ref": "#/$defs/strategy" },
         "pick": { "$ref": "#/$defs/globList" },
         "flatten": { "type": "boolean" },
+        "into": {
+          "description": "Folder inside the tool directory where picked files land (repackage).",
+          "$ref": "#/$defs/relPath"
+        },
         "target": { "type": "string", "minLength": 1 },
         "args": { "$ref": "#/$defs/stringList" },
         "cmake_dirs": {
@@ -207,6 +217,8 @@
       "properties": {
         "strategy": { "$ref": "#/$defs/strategy" },
         "pick": { "$ref": "#/$defs/globList" },
+        "flatten": { "type": "boolean" },
+        "into": { "$ref": "#/$defs/relPath" },
         "target": { "type": "string", "minLength": 1 },
         "args": { "$ref": "#/$defs/stringList" },
         "container": { "type": "string", "minLength": 1 },

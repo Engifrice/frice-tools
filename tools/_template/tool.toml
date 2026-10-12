@@ -24,7 +24,8 @@ sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 [build]
 strategy = "repackage"         # repackage | cmake | script
 pick     = ["bin/@NAME@*", "LICENSE*"]
-flatten  = true
+flatten  = true                # drop the archive's folders
+# into   = "bin"               # put the picked files in this folder
 
 # Overrides per OS ([build.windows]) and per platform ([build.linux-x86_64]),
 # applied in that order: 'args' are appended, other keys replace earlier values.
