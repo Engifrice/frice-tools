@@ -37,6 +37,7 @@ SCHEMA_FILE = "schema/tool.schema.json"
 PLATFORM_REQUIRED = ("os", "isa", "runner", "exe_suffix", "lib_prefix", "lib_suffix")
 PLATFORM_OPTIONAL = ("container",)
 ZERO_SHA256 = "0" * 64
+FILL_IN = "@FILL-IN@"  # marks information still to be filled in by hand
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 SMOKE_FILE_RE = re.compile(r"\{smoke\}/([A-Za-z0-9._+@/-]+)")
 SOURCE_KINDS = ("url", "git")
@@ -247,6 +248,11 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
             report(
                 f"{LICENSES_DIR}/ is empty; add the license texts of everything the tool ships"
             )
+        for license_file in visible_files(licenses):
+            if FILL_IN.encode() in license_file.read_bytes():
+                report(
+                    f"{LICENSES_DIR}/{license_file.name}: replace every {FILL_IN} placeholder"
+                )
         for entry in sorted(licenses.iterdir()):
             if entry.is_dir():
                 report(f"{LICENSES_DIR}/{entry.name}: subdirectories are not allowed")
