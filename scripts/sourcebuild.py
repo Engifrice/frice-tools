@@ -8,8 +8,9 @@ them from an archive for repackage.
 
 CMake and Ninja are this repository's own: the tools named in 'uses' are
 built first, and their programs are the only ones searched for 'cmake' and
-'ninja'. The compiler is the one the environment provides (on Windows, MSVC
-is found with vswhere when cl is not already on PATH).
+'ninja'. The compiler is the one the environment provides, or the one CC and CXX
+name in build_env or the tool's env (on Windows: MSVC, found with vswhere
+when cl is not already on PATH, or Visual Studio's clang-cl).
 
 The compiler and CMake settings shared by every source build of a platform
 (CPU baseline, C runtime, macOS deployment target) come from platforms.toml:
@@ -46,8 +47,8 @@ class BuildError(Exception):
 # Environment ----------------------------------------------------------------------
 
 
-def msvc_environment(isa: str) -> dict[str, str]:
-    """The environment of a Visual Studio developer prompt for a native build on isa."""
+def visual_studio(isa: str) -> Path:
+    """The newest Visual Studio installation with the C++ tools for isa."""
     program_files = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
     vswhere = Path(program_files) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
     if not vswhere.is_file():
@@ -60,9 +61,16 @@ def msvc_environment(isa: str) -> dict[str, str]:
         check=False,
     )
     installation = found.stdout.strip().splitlines()[0] if found.stdout.strip() else ""
-    vcvarsall = Path(installation) / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
-    if not installation or not vcvarsall.is_file():
+    if not installation:
         raise BuildError(f"no Visual Studio installation with the C++ tools for {isa}")
+    return Path(installation)
+
+
+def msvc_environment(isa: str) -> dict[str, str]:
+    """The environment of a Visual Studio developer prompt for a native build on isa."""
+    vcvarsall = visual_studio(isa) / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
+    if not vcvarsall.is_file():
+        raise BuildError(f"{vcvarsall} not found")
     # A string, not a list: cmd.exe needs these exact quotes, which
     # subprocess would otherwise escape.
     command = f'cmd.exe /d /s /c ""{vcvarsall}" {VCVARS_ARCH[isa]} >nul && set"'
@@ -74,6 +82,40 @@ def msvc_environment(isa: str) -> dict[str, str]:
         name, separator, value = line.partition("=")
         if separator and name:
             environment[name] = value
+    return environment
+
+
+def _take_path(environment: dict[str, str]) -> str:
+    """Remove PATH from environment whatever its case (Windows: 'Path') and return it."""
+    value = ""
+    for name in [name for name in environment if name.upper() == "PATH"]:
+        value = environment.pop(name) or value
+    return value
+
+
+def compiler_environment(os_name: str, isa: str, cc: str | None = None, cxx: str | None = None) -> dict[str, str]:
+    """The environment with the C and C++ compilers a source build uses.
+
+    cc and cxx (from build_env or the tool's env) choose the compilers; by
+    default the environment's own (CC, CXX, or what CMake finds). On Windows
+    the default is MSVC's cl, from a developer prompt set up with vswhere when
+    cl is not on PATH; clang-cl (Visual Studio's LLVM tools) can be chosen too,
+    and its folder is then added to PATH.
+    """
+    if os_name != "windows":
+        environment = dict(os.environ)
+        environment.update({name: value for name, value in (("CC", cc), ("CXX", cxx)) if value})
+        return environment
+    environment = dict(os.environ) if shutil.which("cl") else msvc_environment(isa)
+    # Not MinGW or clang that may also be on PATH.
+    environment["CC"] = cc or "cl"
+    environment["CXX"] = cxx or "cl"
+    path = _take_path(environment)
+    if any(shutil.which(environment[name], path=path) is None for name in ("CC", "CXX")):
+        llvm = visual_studio(isa) / "VC" / "Tools" / "Llvm" / ("ARM64" if isa == "arm64" else "x64") / "bin"
+        if llvm.is_dir():
+            path = os.pathsep.join([path, str(llvm)])
+    environment["PATH"] = path
     return environment
 
 
@@ -94,18 +136,10 @@ def build_environment(
     source_date_epoch: int | None = None,
 ) -> dict[str, str]:
     """The environment for configuring and building one tool."""
-    if os_name == "windows" and shutil.which("cl") is None:
-        environment = msvc_environment(isa)
-    else:
-        environment = dict(os.environ)
-    if os_name == "windows":
-        # Not MinGW or clang that may also be on PATH.
-        environment.setdefault("CC", "cl")
-        environment.setdefault("CXX", "cl")
-    environment.update(platform_env)
-    environment.update(tool_env)
-    path = environment.get("PATH", environment.get("Path", ""))
-    environment.pop("Path", None)
+    settings = {**platform_env, **tool_env}
+    environment = compiler_environment(os_name, isa, settings.get("CC"), settings.get("CXX"))
+    environment.update(settings)
+    path = _take_path(environment)
     environment["PATH"] = os.pathsep.join([*(str(d) for d in tool_dirs), path])
     # Dependencies downloaded by CPM (Tracy) are kept between builds.
     environment.setdefault("CPM_SOURCE_CACHE", str(cpm_cache))

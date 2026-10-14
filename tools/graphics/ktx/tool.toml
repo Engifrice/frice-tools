@@ -14,8 +14,14 @@
 # ETC textures to OpenGL; the ktx tool does not use it. Tests are off too.
 #
 # The source is the git tag, not an archive: the version is taken from
-# 'git describe'. The ASTC encoder uses AVX2 on x86_64 (upstream's default,
-# matching platforms.toml) and NEON on arm64.
+# 'git describe'. The ASTC encoder uses AVX2 on x86_64 (upstream's default)
+# and NEON on arm64.
+#
+# Windows builds use clang-cl (Visual Studio's LLVM tools), not MSVC's cl:
+# upstream builds its Windows releases and all its arm64 CI with clang-cl and
+# never tests cl on arm64, and the ASTC encoder's documentation recommends it
+# (faster code; the NEON path has had MSVC code generation bugs). Built with
+# cl, ASTC encoding of a 64x64 image did not finish in 60 s on windows-arm64.
 #
 # LICENSES/ holds LICENSE.md and the texts from upstream's LICENSES/ that
 # apply to code built into ktx (per REUSE.toml and SPDX headers): Apache-2.0
@@ -49,6 +55,9 @@ args     = [
 pick     = ["Release/ktx{exe}"]
 flatten  = true
 into     = "bin"
+
+[build.windows]
+env = { CC = "clang-cl", CXX = "clang-cl" }
 
 [executables]
 ktx = "bin/ktx"

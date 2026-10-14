@@ -43,27 +43,24 @@ def cacheable(tool: Tool, platform: str) -> bool:
 
 
 @functools.lru_cache(maxsize=None)
-def compiler_identity(os_name: str, isa: str) -> str:
-    """The version banner of the C and C++ compilers a source build would use."""
-    if os_name == "windows":
-        from sourcebuild import BuildError, msvc_environment
+def compiler_identity(os_name: str, isa: str, cc: str | None = None, cxx: str | None = None) -> str:
+    """The version banners of the C and C++ compilers a source build would use."""
+    from sourcebuild import BuildError, compiler_environment
 
-        try:
-            environment = os.environ if shutil.which("cl") else msvc_environment(isa)
-        except BuildError as error:
-            return f"unavailable: {error}"
-        path = environment.get("PATH") or environment.get("Path") or ""
-        commands = [[shutil.which("cl", path=path) or "cl"]]
-    else:
-        environment = os.environ
-        commands = []
-        for variable, names in (("CC", ("cc", "gcc", "clang")), ("CXX", ("c++", "g++", "clang++"))):
-            chosen = environment.get(variable) or next((n for n in names if shutil.which(n)), names[0])
-            commands.append([chosen, "--version"])
+    try:
+        environment = compiler_environment(os_name, isa, cc, cxx)
+    except BuildError as error:
+        return f"unavailable: {error}"
+    path = environment.get("PATH", "")
+    defaults = {"CC": ("cc", "gcc", "clang"), "CXX": ("c++", "g++", "clang++")}
     banners = []
-    for command in commands:
+    for variable, names in defaults.items():
+        chosen = environment.get(variable) or next((n for n in names if shutil.which(n, path=path)), names[0])
+        program = shutil.which(chosen, path=path) or chosen
+        # cl prints its version when run without arguments; the others take --version.
+        command = [program] if Path(chosen).stem.lower() == "cl" else [program, "--version"]
         try:
-            result = subprocess.run(command, env=dict(environment), capture_output=True, text=True, errors="replace")
+            result = subprocess.run(command, env=environment, capture_output=True, text=True, errors="replace")
             banners.append((result.stdout + result.stderr).strip().splitlines()[:2])
         except OSError:
             banners.append(["unavailable"])
@@ -102,7 +99,9 @@ def stage_key(
         else:
             digest.update(f"uses {name} {stage_key(used, platform, platform_info, tools, compiler=compiler)}\0".encode())
     if cacheable(tool, platform):
-        digest.update(compiler(platform_info["os"], platform_info["isa"]).encode())
+        settings = {**platform_info.get("build_env", {}), **effective_build(tool.spec, platform).get("env", {})}
+        identity = compiler(platform_info["os"], platform_info["isa"], settings.get("CC"), settings.get("CXX"))
+        digest.update(identity.encode())
     return digest.hexdigest()
 
 
