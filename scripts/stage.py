@@ -22,6 +22,7 @@ from archive import LINK, extract
 from common import LICENSES_DIR, effective_build, entry_path, visible_files
 from discover import Tool
 from fetch import fetch
+import stagecache
 from sourcebuild import BuildError, cmake_build, copy_picked
 
 EXE_PLACEHOLDER = "{exe}"
@@ -172,11 +173,14 @@ def stage_tool(
     log=print,
     platform_info: dict | None = None,
     tools: dict[str, Tool] | None = None,
+    stage_cache: Path | None = None,
 ) -> Path:
     """Stage one tool for one platform and return its stage directory.
 
     cache_dir holds the downloads; git sources and CPM dependencies are cached
-    next to it. tools maps names to tools, for the ones a build 'uses'.
+    next to it. tools maps names to tools, for the ones a build 'uses'. With
+    stage_cache, a tool built from source is reused from there when its key
+    matches, and stored there after a build (stagecache.py).
     """
     spec = tool.spec
     if platform not in spec["platforms"]:
@@ -199,6 +203,12 @@ def stage_tool(
     patterns = [pattern.replace(EXE_PLACEHOLDER, platform_info["exe_suffix"]) for pattern in build["pick"]]
 
     stage = stage_dir(build_dir, platform, tool.name)
+    key = None
+    if stage_cache is not None and stagecache.cacheable(tool, platform):
+        key = stagecache.stage_key(tool, platform, platform_info, tools or {})
+        if stagecache.restore(stage_cache, platform, tool.name, key, stage):
+            log(f"reused the cached build ({key[:12]})")
+            return stage
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
@@ -251,5 +261,7 @@ def stage_tool(
         shutil.copyfile(license_file, target / license_file.name)
         (target / license_file.name).chmod(0o644)
 
+    if key is not None:
+        stagecache.store(stage_cache, platform, tool.name, key, stage)
     log(f"staged for {platform}")
     return stage

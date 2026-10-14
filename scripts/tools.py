@@ -3,13 +3,14 @@
     python scripts/tools.py lint                 check the whole repository
     python scripts/tools.py list [--json]        list tools in build order
     python scripts/tools.py new <group>/<name>   create a tool from tools/_template
-    python scripts/tools.py build [<tool>...]    stage tools into build/<platform>/stage/ (--jobs N)
+    python scripts/tools.py build [<tool>...]    stage tools into build/<platform>/stage/ (--jobs N, --no-cache)
     python scripts/tools.py assemble             pack the staged tools into out/<zip>
     python scripts/tools.py smoke                run the smoke tests against out/<zip>
     python scripts/tools.py matrix               print the CI build matrix as JSON
 
 build, assemble and smoke work on the host platform unless --platform is given.
-Downloads are cached in .cache/downloads/ by SHA-256, git sources in .cache/git/ by commit.
+Downloads are cached in .cache/downloads/ by SHA-256, git sources in .cache/git/ by commit,
+tools built from source in .cache/stages/ (see stagecache.py).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from fetch import FetchError
 from lint import PLATFORMS_FILE, TOOLSET_FILE, lint_repo
 from parallel import Logger, default_jobs, run_ordered
 from smoke import run_smoke
+import stagecache
 from stage import StageError, stage_tool
 
 TEMPLATE_DIR = "tools/_template"
@@ -67,6 +69,7 @@ class Repo:
         self.version = load_toml(root / TOOLSET_FILE)["version"]
         self.build_dir = root / "build"
         self.cache_dir = root / ".cache" / "downloads"
+        self.stage_cache_dir = root / ".cache" / "stages"
         self.out_dir = root / "out"
 
     def platform(self, requested: str | None) -> str:
@@ -109,6 +112,10 @@ def command_build(args: argparse.Namespace) -> int:
         if platform in tool.spec["platforms"] and (not args.tools or tool.name in wanted)
     ]
 
+    if not args.no_cache:
+        for name in stagecache.prune(repo.stage_cache_dir, platform, set(by_name)):
+            print(f"removed the cached build of '{name}', which is no longer a tool")
+
     jobs = args.jobs or default_jobs(len(selected))
     logger = Logger(lambda message: print(message, flush=True))
 
@@ -121,6 +128,7 @@ def command_build(args: argparse.Namespace) -> int:
             log=logger.prefixed(name),
             platform_info=repo.platforms[platform],
             tools=by_name,
+            stage_cache=None if args.no_cache else repo.stage_cache_dir,
         )
 
     failures, not_started = run_ordered(
@@ -297,6 +305,11 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--platform", help=platform_help)
     build.add_argument(
         "--jobs", type=_positive_int, default=0, metavar="N", help="tools built at once (default: automatic)"
+    )
+    build.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="build tools from source even when .cache/stages/ has them (release builds)",
     )
     build.set_defaults(handler=command_build)
 

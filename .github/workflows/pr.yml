@@ -1,10 +1,18 @@
-# Checks every pull request and every push to main.
+# Checks every pull request and every push to main, and builds main from
+# scratch once a week.
 #
 #   lint   the linter, then the build matrix from platforms.toml
 #          (the script tests run locally only: python -m unittest discover -s tests)
 #   build  one job per platform on its native runner: build, assemble, smoke,
 #          and the zip uploaded as a workflow artifact (the source build logs
-#          too, when the build fails)
+#          too, when the job fails)
+#
+# Tools built from source are cached in .cache/stages/ (scripts/stagecache.py
+# decides per tool whether an entry still matches). Pull requests and pushes
+# use the cache; the weekly run uses --no-cache and neither restores nor saves
+# it, so a break caused by a runner image update shows up within a week, not
+# at release time. Pull requests can read caches saved by main, not each
+# other's, so main's pushes keep the cache warm.
 #
 # Actions are pinned to full commit SHAs; the comment names the release.
 
@@ -14,6 +22,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"  # Mondays, 04:23 UTC
 
 permissions:
   contents: read
@@ -69,15 +79,17 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False dnf-plugins-core
           dnf config-manager --set-enabled crb
-          # Python and git for the scripts. libX11/libxcb: RenderDoc links
+          # Python and git for the scripts, tar and zstd for the cache.
+          # libX11/libxcb: RenderDoc links
           # them; every desktop has them, the container does not.
           # gcc-toolset-14: the compiler for source builds; its binaries only
           # need the system libstdc++ (GLIBCXX_3.4.29).
+          # patch: CPM applies Tracy's patches to two of its dependencies.
           # The -devel packages: Tracy's profiler (GLFW for X11 and Wayland,
           # the xdg-portal file dialog over D-Bus, libcurl over OpenSSL).
           dnf install -y --setopt=install_weak_deps=False \
-            python3.12 git-core libX11 libX11-xcb libxcb \
-            gcc-toolset-14-gcc-c++ pkgconf-pkg-config \
+            python3.12 git-core tar zstd libX11 libX11-xcb libxcb \
+            gcc-toolset-14-gcc-c++ pkgconf-pkg-config patch \
             libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
             libxkbcommon-devel wayland-devel mesa-libGL-devel mesa-libEGL-devel \
             dbus-devel openssl-devel
@@ -93,10 +105,41 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build
-        run: python scripts/tools.py build --platform "$PLATFORM"
+      # Restores the newest cache of this platform; the key never matches
+      # exactly, so the restore-keys prefix picks the latest one.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.event_name != 'schedule'
+        with:
+          path: .cache/stages
+          key: stages-${{ matrix.platform }}-${{ github.sha }}
+          restore-keys: stages-${{ matrix.platform }}-
 
-      # The output of source builds (configure and compile) when one fails.
+      - name: Build
+        id: build
+        run: python scripts/tools.py build --platform "$PLATFORM" ${{ github.event_name == 'schedule' && '--no-cache' || '' }}
+
+      # Saved under a key naming the entries it holds, so an unchanged cache
+      # is not uploaded again (saving an existing key is skipped).
+      - name: Cache key
+        id: cache-key
+        if: github.event_name != 'schedule' && steps.build.outcome == 'success'
+        run: |
+          key=$(python -c "import hashlib, pathlib; root = pathlib.Path('.cache/stages'); print(hashlib.sha256(' '.join(sorted(p.relative_to(root).as_posix() for p in root.glob('*/*/*'))).encode()).hexdigest()[:20])")
+          echo "key=stages-$PLATFORM-$key" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.cache-key.outcome == 'success'
+        with:
+          path: .cache/stages
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Assemble
+        run: python scripts/tools.py assemble --platform "$PLATFORM"
+
+      - name: Smoke test
+        run: python scripts/tools.py smoke --platform "$PLATFORM"
+
+      # The output of source builds (configure and compile) when any step failed.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
@@ -104,12 +147,6 @@ jobs:
           path: build/*/logs/
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Assemble
-        run: python scripts/tools.py assemble --platform "$PLATFORM"
-
-      - name: Smoke test
-        run: python scripts/tools.py smoke --platform "$PLATFORM"
 
       # archive: false uploads the zip itself (named after the file), not a zip of it.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
