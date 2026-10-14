@@ -238,7 +238,13 @@ def prepare_source(sources: list[dict], src: Path, caches: dict[str, Path], log)
         return commit_time(src)
     else:
         downloaded = fetch(source["url"], source["sha256"], caches["downloads"], log=log)
-        extract(downloaded, src, source.get("strip_components", 0), select_all)
+        extract(
+            downloaded,
+            src,
+            source.get("strip_components", 0),
+            select_all,
+            backslash_paths=source.get("backslash_paths", False),
+        )
         return None
 
 

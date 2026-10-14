@@ -146,6 +146,10 @@
           "description": "Leading path components removed when extracting.",
           "type": "integer",
           "minimum": 0
+        },
+        "backslash_paths": {
+          "description": "Zip only: read '\\' in member names as a folder separator (zips made by Windows tools).",
+          "type": "boolean"
         }
       }
     },

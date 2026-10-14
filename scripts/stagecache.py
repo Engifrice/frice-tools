@@ -9,12 +9,16 @@ result:
   - the tool's tool.toml, LICENSES/ files and build.py
   - the platform's entry in platforms.toml (build_env, cmake_args, ...)
   - the keys of the tools its build uses (a new CMake rebuilds it)
-  - the pipeline code that produces a stage
+  - the pipeline code that produces a source build's stage (archive.py
+    only when the source is an archive)
   - the compiler's version banner
 
 It cannot cover everything: SDKs, system headers and dependencies a build
 downloads by tag are outside it. Release builds therefore run with --no-cache.
-Only the newest entry per tool and platform is kept.
+
+Only the newest entry per tool and platform is kept, with a small JSON file
+recording the hash of each of the parts above, so a rebuild can say which
+part changed.
 """
 
 from __future__ import annotations
@@ -27,13 +31,16 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from common import BUILD_SCRIPT, LICENSES_DIR, TOOL_FILE, effective_build, visible_files
+from common import BUILD_SCRIPT, LICENSES_DIR, TOOL_FILE, effective_build, sources_for, visible_files
 from discover import Tool
 
 CACHE_VERSION = 1
 
-# Pipeline code whose changes can change a stage directory.
-PIPELINE_FILES = ("archive.py", "common.py", "fetch.py", "sourcebuild.py", "stage.py", "stagecache.py")
+# Pipeline code whose changes can change a source build's stage directory.
+# archive.py counts only for archive sources; stagecache.py itself does not
+# (CACHE_VERSION covers changes to how entries are stored).
+PIPELINE_FILES = ("common.py", "fetch.py", "sourcebuild.py", "stage.py")
+ARCHIVE_FILE = "archive.py"
 SCRIPTS_DIR = Path(__file__).resolve().parent
 
 
@@ -67,10 +74,54 @@ def compiler_identity(os_name: str, isa: str, cc: str | None = None, cxx: str | 
     return json.dumps(banners)
 
 
-def _hash_file(digest, label: str, path: Path) -> None:
-    data = path.read_bytes()
-    digest.update(f"{label}\0{len(data)}\0".encode())
-    digest.update(data)
+def _sha(*chunks: bytes) -> str:
+    digest = hashlib.sha256()
+    for chunk in chunks:
+        digest.update(f"{len(chunk)}\0".encode())
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _files_sha(files: list[tuple[str, Path]]) -> str:
+    return _sha(*(part for label, path in files for part in (label.encode(), path.read_bytes())))
+
+
+def key_parts(
+    tool: Tool,
+    platform: str,
+    platform_info: dict,
+    tools: dict[str, Tool],
+    *,
+    compiler=compiler_identity,
+) -> dict[str, str]:
+    """The hash of each input of a tool's stage on one platform, by name."""
+    tool_files = [(TOOL_FILE, tool.toml_path)]
+    tool_files += [(f"{LICENSES_DIR}/{f.name}", f) for f in visible_files(tool.directory / LICENSES_DIR)]
+    if (tool.directory / BUILD_SCRIPT).is_file():
+        tool_files.append((BUILD_SCRIPT, tool.directory / BUILD_SCRIPT))
+    scripts = list(PIPELINE_FILES)
+    if any("url" in source for source in sources_for(tool.spec, platform)):
+        scripts.append(ARCHIVE_FILE)
+    parts = {
+        "cache version": str(CACHE_VERSION),
+        "platform": _sha(platform.encode(), json.dumps(platform_info, sort_keys=True).encode()),
+        "tool files": _files_sha(tool_files),
+        "pipeline scripts": _files_sha([(name, SCRIPTS_DIR / name) for name in sorted(scripts)]),
+    }
+    for name in sorted(tool.dependency_names()):
+        used = tools.get(name)
+        parts[f"tool '{name}'"] = (
+            "missing" if used is None else stage_key(used, platform, platform_info, tools, compiler=compiler)
+        )
+    if cacheable(tool, platform):
+        settings = {**platform_info.get("build_env", {}), **effective_build(tool.spec, platform).get("env", {})}
+        identity = compiler(platform_info["os"], platform_info["isa"], settings.get("CC"), settings.get("CXX"))
+        parts["compiler"] = _sha(identity.encode())
+    return parts
+
+
+def key_of(parts: dict[str, str]) -> str:
+    return _sha(json.dumps(parts, sort_keys=True).encode())
 
 
 def stage_key(
@@ -82,27 +133,7 @@ def stage_key(
     compiler=compiler_identity,
 ) -> str:
     """The cache key of a tool's stage directory on one platform."""
-    digest = hashlib.sha256()
-    digest.update(f"frice-tools stage cache {CACHE_VERSION}\0{platform}\0".encode())
-    digest.update(json.dumps(platform_info, sort_keys=True).encode())
-    _hash_file(digest, TOOL_FILE, tool.toml_path)
-    for license_file in visible_files(tool.directory / LICENSES_DIR):
-        _hash_file(digest, f"{LICENSES_DIR}/{license_file.name}", license_file)
-    if (tool.directory / BUILD_SCRIPT).is_file():
-        _hash_file(digest, BUILD_SCRIPT, tool.directory / BUILD_SCRIPT)
-    for name in PIPELINE_FILES:
-        _hash_file(digest, f"scripts/{name}", SCRIPTS_DIR / name)
-    for name in sorted(tool.dependency_names()):
-        used = tools.get(name)
-        if used is None:
-            digest.update(f"missing {name}\0".encode())
-        else:
-            digest.update(f"uses {name} {stage_key(used, platform, platform_info, tools, compiler=compiler)}\0".encode())
-    if cacheable(tool, platform):
-        settings = {**platform_info.get("build_env", {}), **effective_build(tool.spec, platform).get("env", {})}
-        identity = compiler(platform_info["os"], platform_info["isa"], settings.get("CC"), settings.get("CXX"))
-        digest.update(identity.encode())
-    return digest.hexdigest()
+    return key_of(key_parts(tool, platform, platform_info, tools, compiler=compiler))
 
 
 def entry_dir(cache_dir: Path, platform: str, tool: str, key: str) -> Path:
@@ -120,14 +151,30 @@ def restore(cache_dir: Path, platform: str, tool: str, key: str, stage: Path) ->
     return True
 
 
-def store(cache_dir: Path, platform: str, tool: str, key: str, stage: Path) -> None:
+def store(cache_dir: Path, platform: str, tool: str, parts: dict[str, str], stage: Path) -> None:
     """Keep a copy of a freshly built stage directory, replacing older entries of the tool."""
+    key = key_of(parts)
     tool_dir = cache_dir / platform / tool
     if tool_dir.exists():
         shutil.rmtree(tool_dir)
     partial = tool_dir / f".partial-{key}"
     shutil.copytree(stage, partial)
+    (tool_dir / f"{key}.json").write_text(json.dumps(parts, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(partial, entry_dir(cache_dir, platform, tool, key))
+
+
+def miss_reason(cache_dir: Path, platform: str, tool: str, parts: dict[str, str]) -> str:
+    """Why there is no entry for these parts: nothing cached, or which parts changed."""
+    tool_dir = cache_dir / platform / tool
+    recorded = sorted(tool_dir.glob("*.json")) if tool_dir.is_dir() else []
+    if not recorded:
+        return "no cached build"
+    try:
+        old = json.loads(recorded[-1].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "the cached build has no readable record"
+    changed = sorted(name for name in set(parts) | set(old) if parts.get(name) != old.get(name))
+    return "changed since the cached build: " + ", ".join(changed)
 
 
 def prune(cache_dir: Path, platform: str, keep: set[str]) -> list[str]:
