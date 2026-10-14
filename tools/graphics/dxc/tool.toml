@@ -2,31 +2,33 @@
 #
 # Windows only, on purpose: DXIL is consumed by Direct3D 12, which only
 # exists on Windows, so D3D12 shaders are cooked on Windows hosts. Slang
-# produces every other target (SPIR-V, Metal, WGSL) without DXC. Microsoft
-# also ships its DXIL validator (dxil, which signs the output; D3D12 rejects
-# unsigned DXIL) only for Windows and Linux x86_64, and the Linux build needs
-# glibc 2.38. Building DXC ourselves (an LLVM fork) is ruled out.
+# produces every other target (SPIR-V, Metal, WGSL) without DXC. Building DXC
+# ourselves (an LLVM fork) for other hosts is ruled out.
 #
-# Ships dxc, dxcompiler (the compiler library; Slang loads it for DXIL output,
-# given its folder with -dxc-path or setDownstreamCompilerPath) and dxil (the
-# validator, which dxcompiler loads from its own folder). Left out: dxv, the
-# headers and import libraries, and the x86 builds.
+# Ships dxc and dxcompiler (the compiler library; Slang loads it for DXIL
+# output, given its folder with -dxc-path or setDownstreamCompilerPath).
+# Since 1.8.2505 DXC validates and signs DXIL with its built-in, open-source
+# validator and never loads dxil.dll (only when DXC_DXIL_DLL_PATH asks for
+# it), so dxil.dll is left out, and with it the release's LICENSE-MS.txt
+# (Microsoft's proprietary terms, which cover none of the shipped files).
+# Also left out: dxv, the headers, import libraries and the x86 builds.
 #
 # The release zip stores paths with backslashes (bin\x64\dxc.exe), hence
 # backslash_paths.
 #
-# LICENSES/: LICENSE-LLVM.txt, LICENCE-MIT.txt and LICENSE-MS.txt from the
-# release zip, ThirdPartyNotices.txt from the tag, and the licenses of the
-# submodules built into dxcompiler (SPIRV-Tools, SPIRV-Headers,
-# DirectX-Headers) at the commits the tag pins. LF line endings.
+# LICENSES/: the release's README maps its licenses to files: LICENSE-MIT.txt
+# covers d3d12shader.h (not shipped), LICENSE-LLVM.txt "all other files". So:
+# LICENSE-LLVM.txt (NCSA) from the release zip, ThirdPartyNotices.txt from the
+# tag, and the licenses of the submodules built into dxcompiler (SPIRV-Tools,
+# SPIRV-Headers, DirectX-Headers) at the commits the tag pins. LF line endings.
 
 schema           = 1
 name             = "dxc"
-description      = "DirectX Shader Compiler: HLSL to DXIL (signed) and SPIR-V."
+description      = "DirectX Shader Compiler: HLSL to DXIL (validated and signed) and SPIR-V."
 homepage         = "https://github.com/microsoft/DirectXShaderCompiler"
 version          = "1.9.2609"
 upstream_version = "v1.9.2609"
-license          = ["NCSA", "MIT", "Apache-2.0", "BSD-3-Clause", "LicenseRef-Microsoft-DXC"]
+license          = ["NCSA", "MIT", "Apache-2.0", "BSD-3-Clause"]
 platforms        = ["windows-x86_64", "windows-arm64"]
 
 [source]
@@ -40,41 +42,31 @@ flatten  = true
 into     = "bin"
 
 [build.windows-x86_64]
-pick = ["bin/x64/dxc.exe", "bin/x64/dxcompiler.dll", "bin/x64/dxil.dll"]
+pick = ["bin/x64/dxc.exe", "bin/x64/dxcompiler.dll"]
 
 [build.windows-arm64]
-pick = ["bin/arm64/dxc.exe", "bin/arm64/dxcompiler.dll", "bin/arm64/dxil.dll"]
+pick = ["bin/arm64/dxc.exe", "bin/arm64/dxcompiler.dll"]
 
 [executables]
 dxc = "bin/dxc"
 
 [libraries]
-compiler  = "bin/dxcompiler"
-validator = "bin/dxil"
+compiler = "bin/dxcompiler"
 
-# --version names dxil.dll only when dxcompiler found and loaded it.
 [[smoke]]
 entrypoint    = "dxc"
 args          = ["--version"]
 expect_output = "1.9.2609"
 
-[[smoke]]
-entrypoint    = "dxc"
-args          = ["--version"]
-expect_output = "dxil.dll"
-
-# DXIL, printed as disassembly; without the validator DXC warns that the
-# output could not be signed.
+# DXIL, printed as disassembly. DXC fails if its validator rejects the output.
 [[smoke]]
 entrypoint    = "dxc"
 args          = ["-T", "cs_6_0", "-E", "main", "{smoke}/compute.hlsl"]
 expect_output = "dx.op."
-forbid_output = "signing library"
 
 [[smoke]]
-entrypoint    = "dxc"
-args          = ["-T", "cs_6_0", "-E", "main", "-Fo", "{tmp}/compute.dxil", "{smoke}/compute.hlsl"]
-forbid_output = "signing library"
+entrypoint = "dxc"
+args       = ["-T", "cs_6_0", "-E", "main", "-Fo", "{tmp}/compute.dxil", "{smoke}/compute.hlsl"]
 
 [[smoke]]
 entrypoint    = "dxc"

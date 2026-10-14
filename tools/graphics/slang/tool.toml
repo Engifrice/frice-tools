@@ -140,12 +140,10 @@ args          = ["{smoke}/neural.slang", "-target", "spirv-asm", "-experimental-
 expect_output = "OpEntryPoint GLCompute"
 
 # DXIL through the DXC tool next to Slang in the zip (Windows only, where DXC
-# ships): Slang loads dxcompiler from that folder, and dxcompiler its
-# validator from its own folder.
+# ships): Slang loads dxcompiler from that folder.
 [[smoke]]
 entrypoint    = "slangc"
 args          = ["{smoke}/compute.slang", "-target", "dxil-asm", "-entry", "main", "-stage", "compute",
                  "-dxc-path", "{stage}/../dxc/bin"]
 platforms     = ["windows-x86_64", "windows-arm64"]
 expect_output = "dx.op."
-forbid_output = "signing library"
