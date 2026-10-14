@@ -27,6 +27,14 @@ pick     = ["bin/@NAME@*", "LICENSE*"]
 flatten  = true                # drop the archive's folders
 # into   = "bin"               # put the picked files in this folder
 
+# To build from source instead (see tools/graphics/ktx/tool.toml):
+#   strategy   = "cmake"
+#   uses       = ["cmake", "ninja"]   # this repository's CMake and Ninja
+#   cmake_dirs = ["app"]              # CMake projects in the source (default: its root)
+#   args       = ["-DOPTION=ON"]      # added to the configure command
+#   target     = "app"                # built instead of the default target
+#   pick       = ["Release/app{exe}"] # from the build tree; {exe} is ".exe" on Windows
+
 # Overrides per OS ([build.windows]) and per platform ([build.linux-x86_64]),
 # applied in that order: 'args' are appended, other keys replace earlier values.
 # [build.windows]
