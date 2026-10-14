@@ -189,15 +189,26 @@
       "additionalProperties": false,
       "properties": {
         "strategy": { "$ref": "#/$defs/strategy" },
-        "pick": { "$ref": "#/$defs/globList" },
+        "uses": {
+          "description": "Tools staged first whose programs the build runs (strategy cmake: the ones providing cmake and ninja).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolName" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "pick": {
+          "description": "Files to ship: glob patterns; {exe} stands for the platform's executable suffix.",
+          "$ref": "#/$defs/globList"
+        },
         "flatten": { "type": "boolean" },
         "into": {
-          "description": "Folder inside the tool directory where picked files land (repackage).",
+          "description": "Folder inside the tool directory where picked files land.",
           "$ref": "#/$defs/relPath"
         },
         "target": { "type": "string", "minLength": 1 },
         "args": { "$ref": "#/$defs/stringList" },
         "cmake_dirs": {
+          "description": "Folders of the source holding one CMake project each (strategy cmake); default: the source root.",
           "type": "array",
           "items": { "$ref": "#/$defs/relPath" },
           "minItems": 1
