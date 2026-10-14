@@ -1,0 +1,139 @@
+# Tracy: the frame profiler's server side (the profiler UI and the command
+# line utilities), built from source.
+#
+# Built from source because the release binaries do not fit: Linux needs
+# glibc 2.38 (built on Arch) and ships the UI as an AppImage, and there is
+# nothing for linux-arm64 or windows-arm64.
+#
+# The profiler only talks to clients of the same version: the engine's
+# TracyClient must be built from the same tag (upstream_version).
+#
+# Ships tracy-profiler (the UI), tracy-capture and tracy-capture-daemon
+# (record without the UI), tracy-csvexport, tracy-merge and tracy-update.
+# Left out: tracy-import-chrome and tracy-import-fuchsia. Each program is its
+# own CMake project (cmake_dirs).
+#
+# Build settings:
+# - NO_ISA_EXTENSIONS: Tracy otherwise compiles with -march=native. The CPU
+#   baseline is set below instead: AVX2 on x86_64 (upstream's Windows build
+#   uses /arch:AVX2 too), the compiler default on arm64.
+# - The libraries Tracy can take from the system (GLFW, FreeType, pugixml,
+#   libcurl) are downloaded and linked statically instead, so the programs do
+#   not depend on what the build machine had installed. On macOS libcurl is
+#   the system one (/usr/lib/libcurl.4.dylib), as upstream does.
+# - Linux: the GLFW backend (LEGACY) with GLFW built for both X11 and Wayland.
+#   GLFW picks Wayland in a Wayland session (XDG_SESSION_TYPE=wayland and
+#   WAYLAND_DISPLAY set) and X11 otherwise; unset WAYLAND_DISPLAY to force X11
+#   (XWayland). Upstream's native Wayland backend needs libwayland 1.22,
+#   newer than RHEL 9's 1.21. The Wayland libraries are loaded at run time.
+#   libcurl uses the system OpenSSL 3 (libssl.so.3) for https.
+# - macOS: a plain executable, not an .app bundle.
+#
+# The build downloads Tracy's dependencies with CPM at configure time, pinned
+# by git tag in Tracy's cmake/vendor.cmake (not by hash).
+#
+# LICENSES/: Tracy's LICENSE, then one file per component built into the
+# programs: the downloaded dependencies (capstone, FreeType under the FTL,
+# GLFW, Dear ImGui, nlohmann/json, curl, md4c, nativefiledialog-extended,
+# PPQSort, pugixml, HTML Tidy, USearch, zstd, base64), the code Tracy carries
+# in its tree (dtl, getopt, LZ4, xxHash, pdqsort, robin-hood-hashing; texts
+# taken from the file headers) and the fonts embedded in the profiler.
+#
+# smoke/sample.tracy is a 3-zone trace converted from a Chrome JSON trace by
+# tracy-import-chrome 0.14.1.
+
+schema           = 1
+name             = "tracy"
+description      = "Frame profiler: the profiler UI and the capture, export, merge and update utilities."
+homepage         = "https://github.com/wolfpld/tracy"
+version          = "0.14.1"
+upstream_version = "v0.14.1"
+license          = ["BSD-3-Clause", "BSD-2-Clause", "MIT", "Zlib", "Apache-2.0", "NCSA", "FTL", "curl", "HTMLTIDY", "OFL-1.1"]
+platforms        = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64", "macos-arm64"]
+
+[source]
+git    = "https://github.com/wolfpld/tracy.git"
+ref    = "v0.14.1"
+commit = "30997d5ca6bb632cc10807a1da8a6d3de0aeeb3c"
+
+[build]
+strategy   = "cmake"
+uses       = ["cmake", "ninja"]
+cmake_dirs = ["profiler", "capture", "csvexport", "merge", "update"]
+args       = [
+    "-DNO_ISA_EXTENSIONS=ON",
+    "-DNO_CCACHE=ON",
+    "-DDOWNLOAD_GLFW=ON",
+    "-DDOWNLOAD_FREETYPE=ON",
+    "-DDOWNLOAD_PUGIXML=ON",
+]
+pick       = [
+    "profiler/tracy-profiler{exe}",
+    "capture/tracy-capture{exe}",
+    "capture/tracy-capture-daemon{exe}",
+    "csvexport/tracy-csvexport{exe}",
+    "merge/tracy-merge{exe}",
+    "update/tracy-update{exe}",
+]
+flatten    = true
+into       = "bin"
+
+[build.windows]
+args = ["-DDOWNLOAD_LIBCURL=ON"]
+
+[build.linux]
+args = ["-DLEGACY=ON", "-DGLFW_BUILD_WAYLAND=ON", "-DGLFW_BUILD_X11=ON", "-DDOWNLOAD_LIBCURL=ON"]
+
+[build.windows-x86_64]
+env = { CFLAGS = "/arch:AVX2", CXXFLAGS = "/arch:AVX2" }
+
+[build.linux-x86_64]
+env = { CFLAGS = "-march=x86-64-v3", CXXFLAGS = "-march=x86-64-v3" }
+
+[executables]
+profiler       = "bin/tracy-profiler"
+capture        = "bin/tracy-capture"
+capture_daemon = "bin/tracy-capture-daemon"
+csvexport      = "bin/tracy-csvexport"
+merge          = "bin/tracy-merge"
+update         = "bin/tracy-update"
+
+[[smoke]]
+entrypoint    = "capture"
+expect_exit   = 1
+expect_output = "tracy-capture 0.14.1"
+
+[[smoke]]
+entrypoint    = "capture_daemon"
+args          = ["--help"]
+expect_exit   = 1
+expect_output = "tracy-capture-daemon 0.14.1"
+
+[[smoke]]
+entrypoint    = "csvexport"
+args          = ["{smoke}/sample.tracy"]
+expect_output = "FriceSmokeZone,,0,20000000"
+
+# The tests share {tmp} and run in order.
+[[smoke]]
+entrypoint = "update"
+args       = ["{smoke}/sample.tracy", "{tmp}/updated.tracy"]
+
+[[smoke]]
+entrypoint = "merge"
+args       = ["-o", "{tmp}/merged.tracy", "{smoke}/sample.tracy", "{tmp}/updated.tracy"]
+
+[[smoke]]
+entrypoint    = "csvexport"
+args          = ["{tmp}/merged.tracy"]
+expect_output = "FriceSmokeZone,,0,40000000"
+
+# The profiler is a GUI. In the Linux container there is no display, so it
+# stops right after start-up, which still proves that every library it links
+# is found (GLFW error 65550: no platform). Windows and macOS runners have a
+# desktop, where it would open its window and wait.
+[[smoke]]
+entrypoint    = "profiler"
+platforms     = ["linux-x86_64", "linux-arm64"]
+expect_exit   = -6
+expect_output = "Failed to detect any supported platform"

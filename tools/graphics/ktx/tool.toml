@@ -1,0 +1,95 @@
+# KTX-Software: the ktx command line tool, built from source.
+#
+# Built from source because no release binary fits: the Linux one needs
+# GLIBCXX_3.4.30 (GCC 12), newer than RHEL 9 and our smoke container, and
+# Windows and macOS only get installers (NSIS .exe, .pkg).
+#
+# Ships only bin/ktx, statically linked (the engine has its own libktx). Left
+# out: libktx, the legacy tools (toktx, ktxsc, ktxinfo, ktx2check, ktx2ktx2;
+# upstream removes them in 4.5) and the documentation.
+#
+# KTX_FEATURE_ETC_UNPACK is off: it compiles in Ericsson's ETC decoder, whose
+# license (LicenseRef-ETCSLA) only allows use for OpenGL, OpenGL ES and WebGL
+# products and is not open source. It is a software fallback for uploading
+# ETC textures to OpenGL; the ktx tool does not use it. Tests are off too.
+#
+# The source is the git tag, not an archive: the version is taken from
+# 'git describe'. The ASTC encoder uses AVX2 on x86_64 (upstream's default,
+# matching platforms.toml) and NEON on arm64.
+#
+# LICENSES/ holds LICENSE.md and the texts from upstream's LICENSES/ that
+# apply to code built into ktx (per REUSE.toml and SPDX headers): Apache-2.0
+# (KTX, Basis Universal, astc-encoder), BSD-1-Clause (uthash), BSD-3-Clause
+# (zstd, tinyexr), MIT (cxxopts, stb, glm), Zlib (lodepng) and fmt's license.
+
+schema           = 1
+name             = "ktx"
+description      = "Creates, encodes, transcodes and validates KTX2 textures (Basis Universal, UASTC, ASTC)."
+homepage         = "https://github.com/KhronosGroup/KTX-Software"
+version          = "4.4.2"
+upstream_version = "v4.4.2"
+license          = ["Apache-2.0", "BSD-1-Clause", "BSD-3-Clause", "MIT", "Zlib", "LicenseRef-fmt"]
+platforms        = ["windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64", "macos-arm64"]
+
+[source]
+git    = "https://github.com/KhronosGroup/KTX-Software.git"
+ref    = "v4.4.2"
+commit = "4d6fc70eaf62ad0558e63e8d97eb9766118327a6"
+
+[build]
+strategy = "cmake"
+uses     = ["cmake", "ninja"]
+target   = "ktxtools"
+args     = [
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DKTX_FEATURE_TESTS=OFF",
+    "-DKTX_FEATURE_ETC_UNPACK=OFF",
+]
+# KTX puts its programs in <build>/<config>/.
+pick     = ["Release/ktx{exe}"]
+flatten  = true
+into     = "bin"
+
+[executables]
+ktx = "bin/ktx"
+
+[[smoke]]
+entrypoint    = "ktx"
+args          = ["--version"]
+expect_output = "v4.4.2"
+
+# The tests share {tmp} and run in order: create, then check what was created.
+[[smoke]]
+entrypoint = "ktx"
+args       = ["create", "--format", "R8G8B8A8_SRGB", "--generate-mipmap", "{smoke}/input.png", "{tmp}/rgba.ktx2"]
+
+[[smoke]]
+entrypoint = "ktx"
+args       = ["create", "--format", "R8G8B8A8_SRGB", "--encode", "basis-lz", "{smoke}/input.png", "{tmp}/basis.ktx2"]
+
+[[smoke]]
+entrypoint = "ktx"
+args       = ["create", "--format", "R8G8B8A8_SRGB", "--encode", "uastc", "--zstd", "18", "{smoke}/input.png", "{tmp}/uastc.ktx2"]
+
+[[smoke]]
+entrypoint = "ktx"
+args       = ["create", "--format", "ASTC_4x4_SRGB_BLOCK", "--astc-quality", "fast", "{smoke}/input.png", "{tmp}/astc.ktx2"]
+
+[[smoke]]
+entrypoint = "ktx"
+args       = ["transcode", "--target", "bc7", "{tmp}/uastc.ktx2", "{tmp}/bc7.ktx2"]
+
+[[smoke]]
+entrypoint    = "ktx"
+args          = ["validate", "--format", "json", "{tmp}/basis.ktx2"]
+expect_output = "\"valid\": true"
+
+[[smoke]]
+entrypoint    = "ktx"
+args          = ["validate", "--format", "json", "{tmp}/astc.ktx2"]
+expect_output = "\"valid\": true"
+
+[[smoke]]
+entrypoint    = "ktx"
+args          = ["info", "{tmp}/bc7.ktx2"]
+expect_output = "VK_FORMAT_BC7_SRGB_BLOCK"
