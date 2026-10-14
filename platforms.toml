@@ -8,6 +8,16 @@
 #   exe_suffix   appended to executable paths in manifest.json
 #   lib_prefix   prepended to library base names in manifest.json
 #   lib_suffix   appended to library base names in manifest.json
+#   build_env    optional environment for tools built from source (strategy
+#                cmake), such as the macOS deployment target or, on Linux,
+#                stripping the symbol tables (LDFLAGS -s)
+#   cmake_args   optional arguments added to every CMake configure
+#
+# On Windows, source builds link the C runtime statically, so no Visual C++
+# redistributable is needed. The CPU baseline is not set here: projects pick
+# their own SIMD per file (KTX compiles one file for SSE4.1 only), so a tool
+# that needs a baseline sets it in its tool.toml. x86_64 tools may require
+# AVX2 (x86-64-v3); arm64 ones use the compiler's default.
 
 schema = 1
 
@@ -18,6 +28,7 @@ runner     = "windows-2025"
 exe_suffix = ".exe"
 lib_prefix = ""
 lib_suffix = ".dll"
+cmake_args = ["-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded", "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"]
 
 [platforms.windows-arm64]
 os         = "windows"
@@ -26,6 +37,7 @@ runner     = "windows-11-arm"
 exe_suffix = ".exe"
 lib_prefix = ""
 lib_suffix = ".dll"
+cmake_args = ["-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded", "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"]
 
 [platforms.linux-x86_64]
 os         = "linux"
@@ -35,6 +47,7 @@ container  = "rockylinux:9"
 exe_suffix = ""
 lib_prefix = "lib"
 lib_suffix = ".so"
+build_env  = { LDFLAGS = "-s" }
 
 [platforms.linux-arm64]
 os         = "linux"
@@ -44,11 +57,14 @@ container  = "rockylinux:9"
 exe_suffix = ""
 lib_prefix = "lib"
 lib_suffix = ".so"
+build_env  = { LDFLAGS = "-s" }
 
 [platforms.macos-arm64]
 os         = "macos"
 isa        = "arm64"
-runner     = "macos-26" # because of slang
+# macOS 26 because Slang's release binaries require it (minimum OS 26.0).
+runner     = "macos-26"
 exe_suffix = ""
 lib_prefix = "lib"
 lib_suffix = ".dylib"
+build_env  = { MACOSX_DEPLOYMENT_TARGET = "26.0" }
