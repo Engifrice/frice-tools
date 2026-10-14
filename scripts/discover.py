@@ -35,15 +35,23 @@ class Tool:
         return self.directory / TOOL_FILE
 
     def dependency_names(self) -> list[str]:
-        """Names listed in [[depends]], ignoring malformed entries (the schema reports those)."""
+        """Tools that must be staged first: [[depends]] and the build's 'uses'.
+
+        Malformed entries are ignored; the schema reports those.
+        """
+        names: list[str] = []
         depends = self.spec.get("depends", [])
-        if not isinstance(depends, list):
-            return []
-        return [
-            entry["tool"]
-            for entry in depends
-            if isinstance(entry, dict) and isinstance(entry.get("tool"), str)
-        ]
+        if isinstance(depends, list):
+            names += [
+                entry["tool"]
+                for entry in depends
+                if isinstance(entry, dict) and isinstance(entry.get("tool"), str)
+            ]
+        build = self.spec.get("build")
+        uses = build.get("uses", []) if isinstance(build, dict) else []
+        if isinstance(uses, list):
+            names += [name for name in uses if isinstance(name, str) and name not in names]
+        return names
 
 
 def discover(tools_root: Path, repo_root: Path | None = None) -> tuple[list[Tool], list[Problem]]:

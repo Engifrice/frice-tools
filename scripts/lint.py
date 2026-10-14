@@ -37,6 +37,9 @@ SCHEMA_FILE = "schema/tool.schema.json"
 
 PLATFORM_REQUIRED = ("os", "isa", "runner", "exe_suffix", "lib_prefix", "lib_suffix")
 PLATFORM_OPTIONAL = ("container",)
+PLATFORM_TABLES = ("build_env", "cmake_args")  # settings for source builds
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PICK_PLACEHOLDERS = ("exe",)
 ZERO_SHA256 = "0" * 64
 FILL_IN = "@FILL-IN@"  # marks information still to be filled in by hand
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
@@ -87,31 +90,39 @@ def check_platforms(data: dict, report: _Reporter) -> dict[str, dict]:
         where = f"platforms.{token}"
         match = PLATFORM_RE.match(token)
         if not match:
-            report(
-                f"{where}: '{token}' is not <os>-<isa> with os in windows|linux|macos and isa in x86_64|arm64"
-            )
+            report(f"{where}: '{token}' is not <os>-<isa> with os in windows|linux|macos and isa in x86_64|arm64")
             continue
         if not isinstance(entry, dict):
             report(f"{where}: must be a table")
             continue
         ok = True
-        for key in sorted(set(entry) - set(PLATFORM_REQUIRED) - set(PLATFORM_OPTIONAL)):
+        for key in sorted(set(entry) - set(PLATFORM_REQUIRED) - set(PLATFORM_OPTIONAL) - set(PLATFORM_TABLES)):
             report(f"{where}.{key}: unknown key")
             ok = False
         for key in PLATFORM_REQUIRED + PLATFORM_OPTIONAL:
             if key in entry and not isinstance(entry[key], str):
                 report(f"{where}.{key}: must be a string")
                 ok = False
+        build_env = entry.get("build_env", {})
+        if not isinstance(build_env, dict) or not all(
+            isinstance(value, str) and ENV_NAME_RE.match(name) for name, value in build_env.items()
+        ):
+            report(f"{where}.build_env: must be a table of environment variables to strings")
+            ok = False
+        cmake_args = entry.get("cmake_args", [])
+        if not isinstance(cmake_args, list) or not all(isinstance(arg, str) for arg in cmake_args):
+            report(f"{where}.cmake_args: must be an array of strings")
+            ok = False
         for key in PLATFORM_REQUIRED:
             if key not in entry:
                 report(f"{where}: missing required key '{key}'")
                 ok = False
         os_name, isa = match.group(1), match.group(2)
         if isinstance(entry.get("os"), str) and entry["os"] != os_name:
-            report(f'{where}.os: must be "{os_name}" to match the token')
+            report(f"{where}.os: must be \"{os_name}\" to match the token")
             ok = False
         if isinstance(entry.get("isa"), str) and entry["isa"] != isa:
-            report(f'{where}.isa: must be "{isa}" to match the token')
+            report(f"{where}.isa: must be \"{isa}\" to match the token")
             ok = False
         for key in ("runner", "container"):
             if entry.get(key) == "":
@@ -134,9 +145,7 @@ def check_toolset(data: dict, report: _Reporter) -> list[str]:
 
     version = data.get("version")
     if not isinstance(version, str) or not TOOLSET_VERSION_RE.match(version):
-        report(
-            f'version must be YYYY.MM.N (for example "2026.10.0"), found {version!r}'
-        )
+        report(f"version must be YYYY.MM.N (for example \"2026.10.0\"), found {version!r}")
 
     removed = data.get("removed", [])
     if not isinstance(removed, list):
@@ -172,12 +181,21 @@ def source_tables(spec: dict) -> list[tuple[str, dict]]:
     for key in sorted(source):
         value = source[key]
         if isinstance(value, list):
-            tables.extend(
-                (f"source.{key}[{index}]", table) for index, table in enumerate(value)
-            )
+            tables.extend((f"source.{key}[{index}]", table) for index, table in enumerate(value))
         else:
             tables.append((f"source.{key}", value))
     return tables
+
+
+def sources_on(spec: dict, platform: str) -> list[dict]:
+    """The source tables one platform uses."""
+    source = spec.get("source")
+    if source is None:
+        return []
+    if is_single_source(source):
+        return [source]
+    tables = source.get(platform, [])
+    return tables if isinstance(tables, list) else [tables]
 
 
 def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> None:
@@ -205,9 +223,7 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
                 report(f"source.{key}: source for a platform the tool does not declare")
     for where, table in source_tables(spec):
         if table.get("sha256") == ZERO_SHA256:
-            report(
-                f"{where}.sha256: placeholder hash; set the real sha256 of the download"
-            )
+            report(f"{where}.sha256: placeholder hash; set the real sha256 of the download")
         if ("sig_url" in table) != ("pgp_fingerprint" in table):
             report(f"{where}: sig_url and pgp_fingerprint must be given together")
 
@@ -219,41 +235,45 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
         strategies[token] = strategy
         if strategy == "script":
             continue
-        has_source = source is not None and (
-            is_single_source(source) or token in source
-        )
+        has_source = source is not None and (is_single_source(source) or token in source)
         if not has_source:
-            report(f'source: no source for {token} (strategy "{strategy}")')
-        if strategy == "repackage" and "pick" not in build:
-            report(
-                f"build: strategy \"repackage\" on {token} needs 'pick' to choose the shipped files"
-            )
+            report(f"source: no source for {token} (strategy \"{strategy}\")")
+        if strategy in ("repackage", "cmake") and "pick" not in build:
+            report(f"build: strategy \"{strategy}\" on {token} needs 'pick' to choose the shipped files")
+        if strategy == "cmake":
+            if has_source and len(sources_on(spec, token)) != 1:
+                report(f"source: strategy \"cmake\" on {token} needs exactly one source")
+        else:
+            for key in ("cmake_dirs", "target"):
+                if key in build:
+                    report(f"build.{key}: only used by strategy \"cmake\", not \"{strategy}\" on {token}")
+        if strategy == "repackage" and has_source and any("git" in s for s in sources_on(spec, token)):
+            report(f"source: strategy \"repackage\" on {token} needs an archive, not a git source")
+        for index, pattern in enumerate(build.get("pick", [])):
+            for placeholder in PLACEHOLDER_RE.findall(pattern):
+                if placeholder not in PICK_PLACEHOLDERS:
+                    report(f"build.pick[{index}]: unknown placeholder {{{placeholder}}} (allowed: {{exe}})")
+
+    if "cmake" not in strategies.values() and "uses" in spec["build"]:
+        report("build.uses: only used by strategy \"cmake\"")
 
     has_script = (tool.directory / BUILD_SCRIPT).is_file()
     uses_script = sorted(t for t, s in strategies.items() if s == "script")
     if uses_script and not has_script:
-        report(
-            f"build: strategy \"script\" on {', '.join(uses_script)} needs {BUILD_SCRIPT} next to tool.toml"
-        )
+        report(f"build: strategy \"script\" on {', '.join(uses_script)} needs {BUILD_SCRIPT} next to tool.toml")
     if has_script and not uses_script:
-        report(f'{BUILD_SCRIPT} exists but no platform uses strategy "script"')
+        report(f"{BUILD_SCRIPT} exists but no platform uses strategy \"script\"")
 
     # License texts.
     licenses = tool.directory / LICENSES_DIR
     if not licenses.is_dir():
-        report(
-            f"{LICENSES_DIR}/ is missing; add the license texts of everything the tool ships"
-        )
+        report(f"{LICENSES_DIR}/ is missing; add the license texts of everything the tool ships")
     else:
         if not visible_files(licenses):
-            report(
-                f"{LICENSES_DIR}/ is empty; add the license texts of everything the tool ships"
-            )
+            report(f"{LICENSES_DIR}/ is empty; add the license texts of everything the tool ships")
         for license_file in visible_files(licenses):
             if FILL_IN.encode() in license_file.read_bytes():
-                report(
-                    f"{LICENSES_DIR}/{license_file.name}: replace every {FILL_IN} placeholder"
-                )
+                report(f"{LICENSES_DIR}/{license_file.name}: replace every {FILL_IN} placeholder")
         for entry in sorted(licenses.iterdir()):
             if entry.is_dir():
                 report(f"{LICENSES_DIR}/{entry.name}: subdirectories are not allowed")
@@ -269,13 +289,9 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
                 continue
             for name in sorted(value):
                 if PLATFORM_RE.match(name) and name not in declared:
-                    report(
-                        f"{kind}.{key}.{name}: path for a platform the tool does not declare"
-                    )
+                    report(f"{kind}.{key}.{name}: path for a platform the tool does not declare")
                 elif OS_RE.match(name) and name not in declared_os:
-                    report(
-                        f"{kind}.{key}.{name}: path for an OS none of the tool's platforms use"
-                    )
+                    report(f"{kind}.{key}.{name}: path for an OS none of the tool's platforms use")
             missing = [token for token in declared if entry_path(value, token) is None]
             if missing:
                 report(f"{kind}.{key}: no path for {', '.join(missing)}")
@@ -284,29 +300,45 @@ def check_tool(tool: Tool, platforms: dict[str, dict], report: _Reporter) -> Non
     for index, smoke in enumerate(spec.get("smoke", [])):
         where = f"smoke[{index}]"
         if smoke["entrypoint"] not in executables:
-            report(
-                f"{where}.entrypoint: '{smoke['entrypoint']}' is not a key of [executables]"
-            )
+            report(f"{where}.entrypoint: '{smoke['entrypoint']}' is not a key of [executables]")
         for token in smoke.get("platforms", []):
             if token not in declared:
-                report(
-                    f"{where}.platforms: '{token}' is not one of the tool's platforms"
-                )
+                report(f"{where}.platforms: '{token}' is not one of the tool's platforms")
         for arg_index, arg in enumerate(smoke.get("args", [])):
             for placeholder in PLACEHOLDER_RE.findall(arg):
                 if placeholder not in SMOKE_PLACEHOLDERS:
                     allowed = ", ".join("{" + p + "}" for p in SMOKE_PLACEHOLDERS)
-                    report(
-                        f"{where}.args[{arg_index}]: unknown placeholder {{{placeholder}}} (allowed: {allowed})"
-                    )
+                    report(f"{where}.args[{arg_index}]: unknown placeholder {{{placeholder}}} (allowed: {allowed})")
             for relative in SMOKE_FILE_RE.findall(arg):
-                if (
-                    ".." in relative.split("/")
-                    or not (tool.directory / SMOKE_DIR / relative).is_file()
-                ):
-                    report(
-                        f"{where}.args[{arg_index}]: {SMOKE_DIR}/{relative} not found next to tool.toml"
-                    )
+                if ".." in relative.split("/") or not (tool.directory / SMOKE_DIR / relative).is_file():
+                    report(f"{where}.args[{arg_index}]: {SMOKE_DIR}/{relative} not found next to tool.toml")
+
+
+CMAKE_PROGRAMS = ("cmake", "ninja")
+
+
+def check_uses(tool: Tool, by_name: dict[str, Tool], report: _Reporter) -> None:
+    """Checks on build.uses that need the other tools."""
+    declared = set(tool.spec["platforms"])
+    uses = tool.spec["build"].get("uses", [])
+    programs: set[str] = set()
+    for name in uses:
+        if name == tool.name:
+            report("build.uses: a tool cannot use itself")
+            continue
+        used = by_name.get(name)
+        if used is None:
+            report(f"build.uses: unknown tool '{name}'")
+            continue
+        missing = sorted(declared - set(used.spec["platforms"]))
+        if missing:
+            report(f"build.uses: '{name}' does not ship on {', '.join(missing)}")
+        programs.update(used.spec.get("executables", {}))
+    cmake_on = [token for token in tool.spec["platforms"] if effective_build(tool.spec, token)["strategy"] == "cmake"]
+    if cmake_on and all(name in by_name for name in uses):
+        for program in CMAKE_PROGRAMS:
+            if program not in programs:
+                report(f"build.uses: strategy \"cmake\" needs a tool with a '{program}' executable")
 
 
 def check_dependencies(tool: Tool, by_name: dict[str, Tool], report: _Reporter) -> None:
@@ -319,9 +351,7 @@ def check_dependencies(tool: Tool, by_name: dict[str, Tool], report: _Reporter) 
             report(f"{where}: a tool cannot depend on itself")
             continue
         if "libraries" not in entry and "executables" not in entry:
-            report(
-                f"{where}: name the 'libraries' or 'executables' of '{name}' to copy"
-            )
+            report(f"{where}: name the 'libraries' or 'executables' of '{name}' to copy")
         dependency = by_name.get(name)
         if dependency is None:
             report(f"{where}: unknown tool '{name}'")
@@ -333,9 +363,7 @@ def check_dependencies(tool: Tool, by_name: dict[str, Tool], report: _Reporter) 
             available = dependency.spec.get(kind, {})
             for key in entry.get(kind, []):
                 if key not in available:
-                    report(
-                        f"{where}.{kind}: '{key}' is not a key of [{kind}] in '{name}'"
-                    )
+                    report(f"{where}.{kind}: '{key}' is not a key of [{kind}] in '{name}'")
 
 
 # Repository -------------------------------------------------------------------
@@ -382,14 +410,11 @@ def lint_repo(root: Path) -> tuple[list[Tool], list[Problem]]:
         report = _Reporter(problems, display_path(tool.toml_path, root))
         check_tool(tool, platforms, report)
         check_dependencies(tool, by_name, report)
+        check_uses(tool, by_name, report)
 
     for name in removed:
         if any(tool.name == name for tool in tools):
-            problems.append(
-                Problem(
-                    TOOLSET_FILE, f"removed: '{name}' is still present under tools/"
-                )
-            )
+            problems.append(Problem(TOOLSET_FILE, f"removed: '{name}' is still present under tools/"))
 
     _, cycle_problems = order_by_dependencies(valid, root)
     problems.extend(cycle_problems)

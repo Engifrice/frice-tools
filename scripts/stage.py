@@ -5,9 +5,11 @@ strategy fills it from the tool's source; the license texts from the tool's
 LICENSES/ folder are added last.
 
 The repackage strategy extracts only the files its pick patterns select,
-directly into the stage directory, in one pass over the archive.
+directly into the stage directory, in one pass over the archive. The cmake
+strategy (sourcebuild.py) builds the source and picks from the build tree.
+In pick patterns, {exe} stands for the platform's executable suffix.
 
-Strategies implemented so far: repackage.
+Strategies implemented so far: repackage, cmake.
 """
 
 from __future__ import annotations
@@ -17,9 +19,12 @@ import shutil
 from pathlib import Path, PurePosixPath
 
 from archive import LINK, extract
-from common import LICENSES_DIR, effective_build, visible_files
+from common import LICENSES_DIR, effective_build, entry_path, visible_files
 from discover import Tool
 from fetch import fetch
+from sourcebuild import BuildError, cmake_build, copy_picked
+
+EXE_PLACEHOLDER = "{exe}"
 
 
 class StageError(Exception):
@@ -94,9 +99,7 @@ class Picker:
     def _patterns_matching(self, prefix: str) -> tuple[str, ...]:
         found = self._matches.get(prefix)
         if found is None:
-            found = tuple(
-                pattern for pattern, regex in self.patterns if regex.match(prefix)
-            )
+            found = tuple(pattern for pattern, regex in self.patterns if regex.match(prefix))
             self._matches[prefix] = found
         return found
 
@@ -111,9 +114,7 @@ class Picker:
             target = self._place(PurePosixPath(path.name) if self.flatten else path)
             source = self._sources.setdefault(target, path)
             if source != path:
-                raise StageError(
-                    f"{target}: picked more than once into the same place ({source} and {path})"
-                )
+                raise StageError(f"{target}: picked more than once into the same place ({source} and {path})")
             return target
         target = None
         # Check every prefix, so each pattern is marked used even when a
@@ -123,15 +124,11 @@ class Picker:
             if found:
                 self.used.update(found)
                 if target is None:
-                    target = self._place(
-                        PurePosixPath(*parts[depth - 1 :]) if self.flatten else path
-                    )
+                    target = self._place(PurePosixPath(*parts[depth - 1 :]) if self.flatten else path)
         if target is not None and kind != "dir":
             source = self._sources.setdefault(target, path)
             if source != path:
-                raise StageError(
-                    f"{target}: picked more than once into the same place ({source} and {path})"
-                )
+                raise StageError(f"{target}: picked more than once into the same place ({source} and {path})")
         return target
 
     def _place(self, target: PurePosixPath) -> PurePosixPath:
@@ -142,32 +139,64 @@ class Picker:
         for pattern, _ in self.patterns:
             if pattern not in self.used:
                 top = ", ".join(sorted(self.top_level)) or "(empty)"
-                raise StageError(
-                    f"pick pattern {pattern!r} matches nothing; the archives' top level holds: {top}"
-                )
+                raise StageError(f"pick pattern {pattern!r} matches nothing; the source's top level holds: {top}")
+
+
+def default_platform_info(platform: str) -> dict:
+    """The platforms.toml keys the stage step needs, for callers without the file."""
+    os_name, isa = platform.split("-", 1)
+    return {"os": os_name, "isa": isa, "exe_suffix": ".exe" if os_name == "windows" else ""}
+
+
+def program_dirs(used: list[Tool], platform: str, build_dir: Path, exe_suffix: str) -> list[Path]:
+    """The folders holding the staged programs of the tools a build uses."""
+    dirs: list[Path] = []
+    for tool in used:
+        stage = stage_dir(build_dir, platform, tool.name)
+        for key, value in sorted(tool.spec.get("executables", {}).items()):
+            relative = entry_path(value, platform)
+            program = stage / f"{relative}{exe_suffix}"
+            if not program.is_file():
+                raise StageError(f"'{tool.name}' is not staged ({program} is missing); build it first")
+            if program.parent not in dirs:
+                dirs.append(program.parent)
+    return dirs
 
 
 def stage_tool(
-    tool: Tool, platform: str, build_dir: Path, cache_dir: Path, *, log=print
+    tool: Tool,
+    platform: str,
+    build_dir: Path,
+    cache_dir: Path,
+    *,
+    log=print,
+    platform_info: dict | None = None,
+    tools: dict[str, Tool] | None = None,
 ) -> Path:
-    """Stage one tool for one platform and return its stage directory."""
+    """Stage one tool for one platform and return its stage directory.
+
+    cache_dir holds the downloads; git sources and CPM dependencies are cached
+    next to it. tools maps names to tools, for the ones a build 'uses'.
+    """
     spec = tool.spec
     if platform not in spec["platforms"]:
         raise StageError(f"{tool.name} does not ship on {platform}")
     if spec.get("depends"):
         raise StageError("[[depends]] is not supported by the pipeline yet")
+    platform_info = platform_info or default_platform_info(platform)
 
     build = effective_build(spec, platform)
     strategy = build["strategy"]
-    if strategy != "repackage":
+    if strategy not in ("repackage", "cmake"):
         raise StageError(f"strategy '{strategy}' is not supported by the pipeline yet")
 
     sources = sources_for(spec, platform)
-    if not sources or any("url" not in source for source in sources):
+    if strategy == "repackage" and (not sources or any("url" not in source for source in sources)):
         raise StageError(f"strategy 'repackage' needs url sources for {platform}")
 
     if "pick" not in build:
-        raise StageError("strategy 'repackage' needs 'pick'")
+        raise StageError(f"strategy '{strategy}' needs 'pick'")
+    patterns = [pattern.replace(EXE_PLACEHOLDER, platform_info["exe_suffix"]) for pattern in build["pick"]]
 
     stage = stage_dir(build_dir, platform, tool.name)
     if stage.exists():
@@ -176,24 +205,40 @@ def stage_tool(
 
     # Several archives go into the same stage directory; a file in two of
     # them is an error, and every pick pattern must match in at least one.
-    picker = Picker(build["pick"], build.get("flatten", False), build.get("into", ""))
-    skipped = shipped = 0
-    for source in sources:
-        downloaded = fetch(source["url"], source["sha256"], cache_dir, log=log)
-        result = extract(
-            downloaded, stage, source.get("strip_components", 0), picker, merge=True
-        )
-        skipped += len(result.skipped_links)
-        shipped += len(result.shipped_links)
-    picker.check()
-    if shipped:
-        log(
-            f"shipped {shipped} picked symbolic link{'s' if shipped != 1 else ''} as files"
-        )
-    if skipped:
-        log(
-            f"skipped {skipped} symbolic link{'s' if skipped != 1 else ''} in the archive"
-        )
+    picker = Picker(patterns, build.get("flatten", False), build.get("into", ""))
+    if strategy == "cmake":
+        known = tools or {}
+        missing = [name for name in build.get("uses", []) if name not in known]
+        if missing:
+            raise StageError(f"unknown tools in 'uses': {', '.join(missing)}")
+        used = [known[name] for name in build.get("uses", [])]
+        try:
+            tree = cmake_build(
+                build=build,
+                sources=sources,
+                platform_info=platform_info,
+                tool_dirs=program_dirs(used, platform, build_dir, platform_info["exe_suffix"]),
+                work=build_dir / platform / "work" / tool.name,
+                log_file=build_dir / platform / "logs" / f"{tool.name}.log",
+                caches={"downloads": cache_dir, "git": cache_dir.parent / "git", "cpm": cache_dir.parent / "cpm"},
+                log=log,
+            )
+            copy_picked(tree, stage, picker)
+        except BuildError as error:
+            raise StageError(str(error)) from None
+        picker.check()
+    else:
+        skipped = shipped = 0
+        for source in sources:
+            downloaded = fetch(source["url"], source["sha256"], cache_dir, log=log)
+            result = extract(downloaded, stage, source.get("strip_components", 0), picker, merge=True)
+            skipped += len(result.skipped_links)
+            shipped += len(result.shipped_links)
+        picker.check()
+        if shipped:
+            log(f"shipped {shipped} picked symbolic link{'s' if shipped != 1 else ''} as files")
+        if skipped:
+            log(f"skipped {skipped} symbolic link{'s' if skipped != 1 else ''} in the archive")
 
     licenses = visible_files(tool.directory / LICENSES_DIR)
     if not licenses:

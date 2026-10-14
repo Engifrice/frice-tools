@@ -5,7 +5,9 @@ its manifest.json, exactly as the engine will do, so a test also proves the
 manifest paths are right. Placeholders in arguments:
 
     {smoke}  the tool's smoke/ folder in this repository
-    {tmp}    an empty folder for this test, also the working directory
+    {tmp}    a folder shared by the tool's tests, which run in order (empty for
+             the first), also the working directory; a test can read what an
+             earlier one wrote
     {stage}  the tool's directory in the extracted zip
 """
 
@@ -98,8 +100,8 @@ def run_smoke(
                 failures.append(Failure(tool.name, label, f"{program.relative_to(root).as_posix()} not found"))
                 continue
 
-            tmp = work / "tmp" / f"{tool.name}-{index}"
-            tmp.mkdir(parents=True)
+            tmp = work / "tmp" / tool.name
+            tmp.mkdir(parents=True, exist_ok=True)
             values = {
                 "smoke": str((tool.directory / SMOKE_DIR).resolve()),
                 "tmp": str(tmp.resolve()),
