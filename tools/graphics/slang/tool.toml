@@ -12,7 +12,8 @@
 # gfx, the slang, slangd and slangi programs, headers, import libraries, CMake
 # files and documentation.
 #
-# DXIL output also needs DXC's dxcompiler, which comes with the DXC tool.
+# DXIL output also needs DXC's dxcompiler, which comes with the DXC tool
+# (Windows only): pass its folder with -dxc-path or setDownstreamCompilerPath.
 #
 # Layout: Windows keeps everything in bin/. Linux and macOS keep bin/ and lib/:
 # slangc finds its libraries through RUNPATH $ORIGIN/../lib (Linux) and
@@ -137,3 +138,14 @@ expect_output = "OpEntryPoint GLCompute"
 entrypoint    = "slangc"
 args          = ["{smoke}/neural.slang", "-target", "spirv-asm", "-experimental-feature"]
 expect_output = "OpEntryPoint GLCompute"
+
+# DXIL through the DXC tool next to Slang in the zip (Windows only, where DXC
+# ships): Slang loads dxcompiler from that folder, and dxcompiler its
+# validator from its own folder.
+[[smoke]]
+entrypoint    = "slangc"
+args          = ["{smoke}/compute.slang", "-target", "dxil-asm", "-entry", "main", "-stage", "compute",
+                 "-dxc-path", "{stage}/../dxc/bin"]
+platforms     = ["windows-x86_64", "windows-arm64"]
+expect_output = "dx.op."
+forbid_output = "signing library"

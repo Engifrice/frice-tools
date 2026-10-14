@@ -1,0 +1,82 @@
+# DXC (DirectX Shader Compiler): Microsoft's official release, repackaged.
+#
+# Windows only, on purpose: DXIL is consumed by Direct3D 12, which only
+# exists on Windows, so D3D12 shaders are cooked on Windows hosts. Slang
+# produces every other target (SPIR-V, Metal, WGSL) without DXC. Microsoft
+# also ships its DXIL validator (dxil, which signs the output; D3D12 rejects
+# unsigned DXIL) only for Windows and Linux x86_64, and the Linux build needs
+# glibc 2.38. Building DXC ourselves (an LLVM fork) is ruled out.
+#
+# Ships dxc, dxcompiler (the compiler library; Slang loads it for DXIL output,
+# given its folder with -dxc-path or setDownstreamCompilerPath) and dxil (the
+# validator, which dxcompiler loads from its own folder). Left out: dxv, the
+# headers and import libraries, and the x86 builds.
+#
+# The release zip stores paths with backslashes (bin\x64\dxc.exe), hence
+# backslash_paths.
+#
+# LICENSES/: LICENSE-LLVM.txt, LICENCE-MIT.txt and LICENSE-MS.txt from the
+# release zip, ThirdPartyNotices.txt from the tag, and the licenses of the
+# submodules built into dxcompiler (SPIRV-Tools, SPIRV-Headers,
+# DirectX-Headers) at the commits the tag pins. LF line endings.
+
+schema           = 1
+name             = "dxc"
+description      = "DirectX Shader Compiler: HLSL to DXIL (signed) and SPIR-V."
+homepage         = "https://github.com/microsoft/DirectXShaderCompiler"
+version          = "1.9.2609"
+upstream_version = "v1.9.2609"
+license          = ["NCSA", "MIT", "Apache-2.0", "BSD-3-Clause", "LicenseRef-Microsoft-DXC"]
+platforms        = ["windows-x86_64", "windows-arm64"]
+
+[source]
+url             = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip"
+sha256          = "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1"
+backslash_paths = true
+
+[build]
+strategy = "repackage"
+flatten  = true
+into     = "bin"
+
+[build.windows-x86_64]
+pick = ["bin/x64/dxc.exe", "bin/x64/dxcompiler.dll", "bin/x64/dxil.dll"]
+
+[build.windows-arm64]
+pick = ["bin/arm64/dxc.exe", "bin/arm64/dxcompiler.dll", "bin/arm64/dxil.dll"]
+
+[executables]
+dxc = "bin/dxc"
+
+[libraries]
+compiler  = "bin/dxcompiler"
+validator = "bin/dxil"
+
+# --version names dxil.dll only when dxcompiler found and loaded it.
+[[smoke]]
+entrypoint    = "dxc"
+args          = ["--version"]
+expect_output = "1.9.2609"
+
+[[smoke]]
+entrypoint    = "dxc"
+args          = ["--version"]
+expect_output = "dxil.dll"
+
+# DXIL, printed as disassembly; without the validator DXC warns that the
+# output could not be signed.
+[[smoke]]
+entrypoint    = "dxc"
+args          = ["-T", "cs_6_0", "-E", "main", "{smoke}/compute.hlsl"]
+expect_output = "dx.op."
+forbid_output = "signing library"
+
+[[smoke]]
+entrypoint    = "dxc"
+args          = ["-T", "cs_6_0", "-E", "main", "-Fo", "{tmp}/compute.dxil", "{smoke}/compute.hlsl"]
+forbid_output = "signing library"
+
+[[smoke]]
+entrypoint    = "dxc"
+args          = ["-T", "cs_6_0", "-E", "main", "-spirv", "{smoke}/compute.hlsl"]
+expect_output = "OpEntryPoint GLCompute"
