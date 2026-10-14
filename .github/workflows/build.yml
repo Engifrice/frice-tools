@@ -1,0 +1,136 @@
+# Builds, assembles and smoke-tests the toolset on every platform: one job per
+# platform on its native runner. Called by pr.yml and release.yml.
+#
+# Inputs:
+#   matrix          the build matrix, from `tools.py matrix`
+#   cache           restore and save .cache/stages/ (tools built from source,
+#                   see scripts/stagecache.py); false builds everything from
+#                   scratch with --no-cache and leaves the cache alone
+#   retention-days  how long the zips stay as workflow artifacts
+#
+# Each job uploads its zip as a workflow artifact, and the source build logs
+# when it fails.
+#
+# Actions are pinned to full commit SHAs; the comment names the release.
+
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+      cache:
+        type: boolean
+        required: true
+      retention-days:
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    # Linux jobs run inside the container from platforms.toml, so smoke tests
+    # run in that older userland. For other platforms the value is empty and
+    # the job runs directly on the runner.
+    container: ${{ matrix.container }}
+    # Source builds (KTX, Tracy) take most of the time.
+    timeout-minutes: 90
+    env:
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: Prepare container
+        if: matrix.container != ''
+        run: |
+          # One dnf transaction: CRB is enabled for it alone (no
+          # dnf-plugins-core), no documentation, no weak dependencies, and
+          # 10 parallel downloads instead of 3.
+          # Python and git for the scripts, tar and zstd for the cache.
+          # libX11/libxcb: RenderDoc links them; every desktop has them, the
+          # container does not.
+          # gcc-toolset-14: the compiler for source builds; its binaries only
+          # need the system libstdc++ (GLIBCXX_3.4.29).
+          # patch: CPM applies Tracy's patches to two of its dependencies.
+          # The -devel packages: Tracy's profiler (GLFW for X11 and Wayland,
+          # the xdg-portal file dialog over D-Bus, libcurl over OpenSSL).
+          dnf install -y --nodocs --enablerepo=crb \
+            --setopt=install_weak_deps=False --setopt=max_parallel_downloads=10 \
+            python3.12 git-core tar zstd libX11 libX11-xcb libxcb \
+            gcc-toolset-14-gcc-c++ pkgconf-pkg-config patch \
+            libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
+            libxkbcommon-devel wayland-devel mesa-libGL-devel mesa-libEGL-devel \
+            dbus-devel openssl-devel
+          ln -sf /usr/bin/python3.12 /usr/local/bin/python
+          echo "/opt/rh/gcc-toolset-14/root/usr/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.container == ''
+        with:
+          python-version: "3.12"
+
+      # Restores the newest cache of this platform; the key never matches
+      # exactly, so the restore-keys prefix picks the latest one.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: inputs.cache
+        with:
+          path: .cache/stages
+          key: stages-${{ matrix.platform }}-${{ github.sha }}
+          restore-keys: stages-${{ matrix.platform }}-
+
+      - name: Build
+        id: build
+        run: python scripts/tools.py build --platform "$PLATFORM" ${{ !inputs.cache && '--no-cache' || '' }}
+
+      # Saved under a key naming the entries it holds, so an unchanged cache
+      # is not uploaded again (saving an existing key is skipped).
+      - name: Cache key
+        id: cache-key
+        if: inputs.cache && steps.build.outcome == 'success'
+        run: |
+          key=$(python -c "import hashlib, pathlib; root = pathlib.Path('.cache/stages'); print(hashlib.sha256(' '.join(sorted(p.relative_to(root).as_posix() for p in root.glob('*/*/*'))).encode()).hexdigest()[:20])")
+          echo "key=stages-$PLATFORM-$key" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.cache-key.outcome == 'success'
+        with:
+          path: .cache/stages
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Assemble
+        run: python scripts/tools.py assemble --platform "$PLATFORM"
+
+      - name: Smoke test
+        run: python scripts/tools.py smoke --platform "$PLATFORM"
+
+      # The output of source builds (configure and compile) when any step failed.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: build-logs-${{ matrix.platform }}
+          path: build/*/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # archive: false uploads the zip itself (named after the file), not a zip of it.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: out/frice-tools-*.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}

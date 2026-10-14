@@ -2,8 +2,10 @@
 #
 # A release is published only when a change to `version` reaches main.
 # version: YYYY.MM.N (calendar year and month, then a counter from 0).
-# removed: tools deliberately dropped since the previous release. Removing a
-#          tool without listing it here fails the release.
+# removed: what was deliberately dropped since the previous release: a tool
+#          ("ffmpeg") or one key of a tool's [executables] or [libraries]
+#          ("ffmpeg.executables.ffprobe"). Dropping either without listing it
+#          here fails the release. Empty it again after the release.
 
 schema  = 1
 version = "2026.10.0"

@@ -28,8 +28,10 @@ consoles are never hosts.
 
 ## 2. Releases and asset names
 
-A toolset release is one GitHub release containing one zip per host, a release
-index, and the source archives that some licenses require.
+A toolset release is one GitHub release, tagged on the commit it was built
+from, containing one zip per host, a release index, and source archives when a
+tool's license requires shipping its source with the binaries. No tool does
+today: where to get each tool's source is in its `LICENSES/` (`SOURCE.md`).
 
 Releases are immutable: once published, a tag and its assets never change and a
 version number is never reused.
@@ -68,7 +70,6 @@ frice-tools-2026.10.0-linux-x86_64.zip
 frice-tools-2026.10.0-linux-arm64.zip
 frice-tools-2026.10.0-macos-arm64.zip
 frice-tools-2026.10.0-release.json
-frice-tools-2026.10.0-src-ffmpeg.tar.xz
 ```
 
 ### Download location
@@ -152,16 +153,29 @@ Paths are relative to the zip root, use `/`, and name the real file including
   "assets": {
     "windows-x86_64": { "name": "frice-tools-2026.10.0-windows-x86_64.zip", "size": 0, "sha256": "<hex>" }
   },
-  "sources": {
-    "ffmpeg": { "name": "frice-tools-2026.10.0-src-ffmpeg.tar.xz", "size": 0, "sha256": "<hex>" }
-  },
+  "sources": {},
   "tools": {
-    "ffmpeg": { "version": "9.0", "upstream_version": "n9.0", "platforms": ["windows-x86_64"] }
+    "ffmpeg": {
+      "version": "9.0.2",
+      "upstream_version": "n9.0.2",
+      "platforms": ["linux-arm64", "linux-x86_64", "macos-arm64", "windows-x86_64"],
+      "executables": ["ffmpeg", "ffprobe"],
+      "libraries": []
+    }
   }
 }
 ```
 
-The private SDK repository reads this file to write the engine's lockfile.
+| Field | Meaning |
+| --- | --- |
+| `assets.<host>` | the zip of that host: file name, size in bytes, SHA-256 |
+| `sources.<tool>` | a source archive, same fields; empty when no tool needs one |
+| `tools.<t>.platforms` | the hosts whose zip contains the tool |
+| `tools.<t>.executables`, `libraries` | the keys of the tool's entries in `manifest.json` |
+
+The private SDK repository reads this file to write the engine's lockfile. The
+next release is checked against it: a tool or a key may only disappear when
+`toolset.toml` lists it in `removed` (`ffmpeg`, `ffmpeg.executables.ffprobe`).
 
 ## 7. What the engine does
 

@@ -7,6 +7,9 @@
     python scripts/tools.py assemble             pack the staged tools into out/<zip>
     python scripts/tools.py smoke                run the smoke tests against out/<zip>
     python scripts/tools.py matrix               print the CI build matrix as JSON
+    python scripts/tools.py version              print the toolset version (toolset.toml)
+    python scripts/tools.py release-check        check the release against the previous one (--previous)
+    python scripts/tools.py release-index        write the release index and notes for out/ (--assets, --notes)
 
 build, assemble and smoke work on the host platform unless --platform is given.
 Downloads are cached in .cache/downloads/ by SHA-256, git sources in .cache/git/ by commit,
@@ -29,6 +32,7 @@ from discover import discover, order_by_dependencies
 from fetch import FetchError
 from lint import PLATFORMS_FILE, TOOLSET_FILE, lint_repo
 from parallel import Logger, default_jobs, run_ordered
+from release import ReleaseError, build_index, check_release, index_name, release_notes
 from smoke import run_smoke
 import stagecache
 from stage import StageError, stage_tool
@@ -194,6 +198,44 @@ def command_matrix(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_version(args: argparse.Namespace) -> int:
+    print(Repo(Path(args.root)).version)
+    return 0
+
+
+def command_release_check(args: argparse.Namespace) -> int:
+    repo = Repo(Path(args.root))
+    previous = None
+    if args.previous:
+        previous = json.loads(Path(args.previous).read_text(encoding="utf-8"))
+    removed = load_toml(repo.root / TOOLSET_FILE).get("removed", [])
+    problems = check_release(repo.tools, repo.version, removed, previous)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    if problems:
+        return 1
+    after = f" after {previous['toolset']}" if previous else " (first release)"
+    print(f"ok: {repo.version} can be released{after}")
+    return 0
+
+
+def command_release_index(args: argparse.Namespace) -> int:
+    repo = Repo(Path(args.root))
+    asset_dir = Path(args.assets) if args.assets else repo.out_dir
+    try:
+        index = build_index(repo.tools, repo.version, list(repo.platforms), asset_dir)
+    except (ReleaseError, OSError, ValueError, KeyError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    path = asset_dir / index_name(repo.version)
+    path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(f"wrote {path}")
+    if args.notes:
+        Path(args.notes).write_text(release_notes(index, list(repo.platforms)), encoding="utf-8", newline="\n")
+        print(f"wrote {args.notes}")
+    return 0
+
+
 def command_list(args: argparse.Namespace) -> int:
     root = Path(args.root)
     tools, problems = discover(root / "tools", root)
@@ -324,6 +366,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     matrix = commands.add_parser("matrix", help="print the CI build matrix as JSON")
     matrix.set_defaults(handler=command_matrix)
+    version = commands.add_parser("version", help="print the toolset version from toolset.toml")
+    version.set_defaults(handler=command_version)
+
+    release_check = commands.add_parser("release-check", help="check the release against the previous one")
+    release_check.add_argument("--previous", metavar="FILE", help="the previous release's -release.json")
+    release_check.set_defaults(handler=command_release_check)
+
+    release_index = commands.add_parser("release-index", help="write the release index next to the host zips")
+    release_index.add_argument("--assets", metavar="DIR", help="folder holding every host zip (default: out/)")
+    release_index.add_argument("--notes", metavar="FILE", help="also write the release notes (Markdown) here")
+    release_index.set_defaults(handler=command_release_index)
     return parser
 
 

@@ -1,0 +1,145 @@
+# Publishes a toolset release when a new version in toolset.toml reaches main.
+#
+# To release: open a pull request that sets toolset.toml's version to the
+# next YYYY.MM.N (and lists in 'removed' anything dropped since the previous
+# release); pr.yml checks it against the previous release. Merging it runs
+# this workflow:
+#
+#   prepare  lint; stop if v<version> already exists; check the version and
+#            removals against the previous release's index
+#   build    build.yml from scratch (--no-cache, no cache restored), with the
+#            smoke tests, on every platform
+#   publish  write frice-tools-<version>-release.json (sizes and SHA-256 of
+#            every zip) and the release notes, attest the build provenance of
+#            the files, and create the v<version> release on the merged commit
+#
+# A failed release can be retried with "Run workflow" (workflow_dispatch) on
+# main once fixed. Releases are immutable (CONTRACT.md): a published version
+# is never rebuilt or replaced.
+#
+# Actions are pinned to full commit SHAs; the comment names the release.
+
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths: [toolset.toml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Lint repository
+        run: python scripts/tools.py lint
+
+      - name: Version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python scripts/tools.py version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "v$version is already released; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check against the previous release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName // ""')
+          if [ -z "$latest" ]; then
+            python scripts/tools.py release-check
+          else
+            gh release download "$latest" --repo "$GITHUB_REPOSITORY" --pattern 'frice-tools-*-release.json' --dir previous
+            python scripts/tools.py release-check --previous previous/*-release.json
+          fi
+
+      - name: Compute build matrix
+        id: matrix
+        run: echo "matrix=$(python scripts/tools.py matrix)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      matrix: ${{ needs.prepare.outputs.matrix }}
+      cache: false
+      retention-days: 1
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write      # create the tag and the release
+      id-token: write      # sign the provenance attestation
+      attestations: write  # store it
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: frice-tools-*.zip
+          merge-multiple: true
+          path: out
+
+      - name: Release index and notes
+        run: python scripts/tools.py release-index --assets out --notes notes.md
+
+      # Anyone can then check a zip came from this workflow and commit:
+      # gh attestation verify <file> --repo <owner>/frice-tools
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: out/frice-tools-*
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "frice-tools $VERSION" \
+            --notes-file notes.md \
+            out/frice-tools-"$VERSION"-*

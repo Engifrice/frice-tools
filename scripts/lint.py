@@ -41,7 +41,9 @@ PLATFORM_TABLES = ("build_env", "cmake_args")  # settings for source builds
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PICK_PLACEHOLDERS = ("exe",)
 ZERO_SHA256 = "0" * 64
-FILL_IN = "@FILL-IN@"  # marks information still to be filled in by hand
+FILL_IN = "@FILL-IN@"
+# Entries of toolset.toml 'removed': a tool, or one key of a tool's entries.
+REMOVED_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.(?:executables|libraries)\.[a-z][a-z0-9_-]*)?$")  # marks information still to be filled in by hand
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 SMOKE_FILE_RE = re.compile(r"\{smoke\}/([A-Za-z0-9._+@/-]+)")
 SOURCE_KINDS = ("url", "git")
@@ -153,8 +155,8 @@ def check_toolset(data: dict, report: _Reporter) -> list[str]:
         return []
     names: list[str] = []
     for index, name in enumerate(removed):
-        if not isinstance(name, str) or not NAME_RE.match(name):
-            report(f"removed[{index}]: {name!r} is not a valid tool name")
+        if not isinstance(name, str) or not REMOVED_RE.match(name):
+            report(f"removed[{index}]: {name!r} is not a tool name or <tool>.executables.<key> / <tool>.libraries.<key>")
         elif name in names:
             report(f"removed: '{name}' is listed more than once")
         else:
@@ -413,8 +415,15 @@ def lint_repo(root: Path) -> tuple[list[Tool], list[Problem]]:
         check_uses(tool, by_name, report)
 
     for name in removed:
-        if any(tool.name == name for tool in tools):
-            problems.append(Problem(TOOLSET_FILE, f"removed: '{name}' is still present under tools/"))
+        tool_name, _, rest = name.partition(".")
+        kind, _, key = rest.partition(".")
+        for tool in tools:
+            if tool.name != tool_name:
+                continue
+            if not rest:
+                problems.append(Problem(TOOLSET_FILE, f"removed: '{name}' is still present under tools/"))
+            elif isinstance(tool.spec.get(kind), dict) and key in tool.spec[kind]:
+                problems.append(Problem(TOOLSET_FILE, f"removed: '{name}' is still in [{kind}] of '{tool_name}'"))
 
     _, cycle_problems = order_by_dependencies(valid, root)
     problems.extend(cycle_problems)
