@@ -3,7 +3,8 @@
 #   lint   the linter, then the build matrix from platforms.toml
 #          (the script tests run locally only: python -m unittest discover -s tests)
 #   build  one job per platform on its native runner: build, assemble, smoke,
-#          and the zip uploaded as a workflow artifact
+#          and the zip uploaded as a workflow artifact (the source build logs
+#          too, when the build fails)
 #
 # Actions are pinned to full commit SHAs; the comment names the release.
 
@@ -58,16 +59,30 @@ jobs:
     # run in that older userland. For other platforms the value is empty and
     # the job runs directly on the runner.
     container: ${{ matrix.container }}
-    timeout-minutes: 30
+    # Source builds (KTX, Tracy) take most of the time.
+    timeout-minutes: 90
     env:
       PLATFORM: ${{ matrix.platform }}
     steps:
       - name: Prepare container
         if: matrix.container != ''
         run: |
-          # libX11/libxcb: RenderDoc links them; every desktop has them, the container does not.
-          dnf install -y --setopt=install_weak_deps=False python3.12 git-core libX11 libX11-xcb libxcb
+          dnf install -y --setopt=install_weak_deps=False dnf-plugins-core
+          dnf config-manager --set-enabled crb
+          # Python and git for the scripts. libX11/libxcb: RenderDoc links
+          # them; every desktop has them, the container does not.
+          # gcc-toolset-14: the compiler for source builds; its binaries only
+          # need the system libstdc++ (GLIBCXX_3.4.29).
+          # The -devel packages: Tracy's profiler (GLFW for X11 and Wayland,
+          # the xdg-portal file dialog over D-Bus, libcurl over OpenSSL).
+          dnf install -y --setopt=install_weak_deps=False \
+            python3.12 git-core libX11 libX11-xcb libxcb \
+            gcc-toolset-14-gcc-c++ pkgconf-pkg-config \
+            libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
+            libxkbcommon-devel wayland-devel mesa-libGL-devel mesa-libEGL-devel \
+            dbus-devel openssl-devel
           ln -sf /usr/bin/python3.12 /usr/local/bin/python
+          echo "/opt/rh/gcc-toolset-14/root/usr/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,6 +96,15 @@ jobs:
       - name: Build
         run: python scripts/tools.py build --platform "$PLATFORM"
 
+      # The output of source builds (configure and compile) when one fails.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: build-logs-${{ matrix.platform }}
+          path: build/*/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Assemble
         run: python scripts/tools.py assemble --platform "$PLATFORM"
 
@@ -93,4 +117,4 @@ jobs:
           path: out/frice-tools-*.zip
           archive: false
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
