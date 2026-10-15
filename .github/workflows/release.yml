@@ -118,11 +118,18 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The zips were uploaded as they are (archive: false). skip-decompress
+      # keeps them that way: without it, the action unzips each one into out/,
+      # all five on top of each other, and no zip is left.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: frice-tools-*.zip
           merge-multiple: true
+          skip-decompress: true
           path: out
+
+      - name: List the downloaded zips
+        run: ls -l out
 
       - name: Release index and notes
         run: python scripts/tools.py release-index --assets out --notes notes.md
