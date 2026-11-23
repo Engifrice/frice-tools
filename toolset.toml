@@ -8,5 +8,5 @@
 #          here fails the release. Empty it again after the release.
 
 schema  = 1
-version = "2026.10.0"
+version = "2026.11.0"
 removed = []
