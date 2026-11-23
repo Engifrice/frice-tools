@@ -3,7 +3,7 @@
 Contract version: **1**
 
 This file is the agreement between this repository, which publishes the
-toolsets, and the Frice engine, which downloads and uses them. Everything the
+toolsets, and `Engifrice`, which downloads and uses them. Everything the
 engine relies on is defined here. Anything not defined here is an
 implementation detail of this repository and may change at any time.
 
@@ -117,17 +117,17 @@ finds every file through `manifest.json` and never builds a path itself.
 }
 ```
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `schema` | integer | `1`. The engine refuses a value it does not know. |
-| `toolset` | string | the release version, matching the zip name |
-| `platform` | string | the host token, matching the zip name |
-| `tools` | object | tool name to tool entry |
-| `tools.<t>.version` | string | normalized version: lowercase, no leading `v`, `-` and `+` written as `_` |
-| `tools.<t>.upstream_version` | string | the upstream version or tag, verbatim |
-| `tools.<t>.components` | object | optional: other tools bundled inside this one, name to version |
-| `tools.<t>.executables` | object | key to path of a program; always present, possibly empty |
-| `tools.<t>.libraries` | object | key to path of a shared library the engine may load; always present, possibly empty |
+| Field                        | Type    | Meaning                                                                             |
+| ---------------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `schema`                     | integer | `1`. The engine refuses a value it does not know.                                   |
+| `toolset`                    | string  | the release version, matching the zip name                                          |
+| `platform`                   | string  | the host token, matching the zip name                                               |
+| `tools`                      | object  | tool name to tool entry                                                             |
+| `tools.<t>.version`          | string  | normalized version: lowercase, no leading `v`, `-` and `+` written as `_`           |
+| `tools.<t>.upstream_version` | string  | the upstream version or tag, verbatim                                               |
+| `tools.<t>.components`       | object  | optional: other tools bundled inside this one, name to version                      |
+| `tools.<t>.executables`      | object  | key to path of a program; always present, possibly empty                            |
+| `tools.<t>.libraries`        | object  | key to path of a shared library the engine may load; always present, possibly empty |
 
 Paths are relative to the zip root, use `/`, and name the real file including
 `.exe`, `lib` prefixes, `.dll`, `.so` and `.dylib`.
@@ -166,12 +166,12 @@ Paths are relative to the zip root, use `/`, and name the real file including
 }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `assets.<host>` | the zip of that host: file name, size in bytes, SHA-256 |
-| `sources.<tool>` | a source archive, same fields; empty when no tool needs one |
-| `tools.<t>.platforms` | the hosts whose zip contains the tool |
-| `tools.<t>.executables`, `libraries` | the keys of the tool's entries in `manifest.json` |
+| Field                                | Meaning                                                     |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `assets.<host>`                      | the zip of that host: file name, size in bytes, SHA-256     |
+| `sources.<tool>`                     | a source archive, same fields; empty when no tool needs one |
+| `tools.<t>.platforms`                | the hosts whose zip contains the tool                       |
+| `tools.<t>.executables`, `libraries` | the keys of the tool's entries in `manifest.json`           |
 
 The private SDK repository reads this file to write the engine's lockfile. The
 next release is checked against it: a tool or a key may only disappear when
