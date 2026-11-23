@@ -100,7 +100,7 @@ def compiler_environment(os_name: str, isa: str, cc: str | None = None, cxx: str
     default the environment's own (CC, CXX, or what CMake finds). On Windows
     the default is MSVC's cl, from a developer prompt set up with vswhere when
     cl is not on PATH; clang-cl (Visual Studio's LLVM tools) can be chosen too,
-    and its folder is then added to PATH.
+    and its folder then goes first in PATH.
     """
     if os_name != "windows":
         environment = dict(os.environ)
@@ -111,10 +111,15 @@ def compiler_environment(os_name: str, isa: str, cc: str | None = None, cxx: str
     environment["CC"] = cc or "cl"
     environment["CXX"] = cxx or "cl"
     path = _take_path(environment)
-    if any(shutil.which(environment[name], path=path) is None for name in ("CC", "CXX")):
+    # clang-cl comes from Visual Studio's own LLVM tools, put ahead of any
+    # other LLVM on PATH: each MSVC STL release requires a minimum Clang
+    # (yvals_core.h, error STL1000), which the Clang shipped with it meets and
+    # an older standalone one (GitHub's windows-2025 image has LLVM 20 in
+    # C:\Program Files\LLVM) may not.
+    if any(environment[name] != "cl" for name in ("CC", "CXX")):
         llvm = visual_studio(isa) / "VC" / "Tools" / "Llvm" / ("ARM64" if isa == "arm64" else "x64") / "bin"
-        if llvm.is_dir():
-            path = os.pathsep.join([path, str(llvm)])
+        if any(shutil.which(environment[name], path=str(llvm)) for name in ("CC", "CXX")):
+            path = os.pathsep.join([str(llvm), path])
     environment["PATH"] = path
     return environment
 

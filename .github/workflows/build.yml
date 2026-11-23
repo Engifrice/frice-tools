@@ -73,6 +73,12 @@ jobs:
             libxkbcommon-devel wayland-devel mesa-libGL-devel mesa-libEGL-devel \
             dbus-devel openssl-devel
           ln -sf /usr/bin/python3.12 /usr/local/bin/python
+          # The system directories first: the runner builds the PATH of later
+          # steps from GITHUB_PATH and the PATH the image declares, and
+          # rockylinux:9 images since November 2026 declare none, so the
+          # toolset alone would hide tar and git from actions/checkout.
+          # Later lines go first in PATH, so the toolset still wins.
+          echo "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> "$GITHUB_PATH"
           echo "/opt/rh/gcc-toolset-14/root/usr/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

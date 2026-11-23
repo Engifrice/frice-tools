@@ -5,23 +5,23 @@ licensed under the GNU General Public License, version 3 or later (see
 COPYING.GPLv3 and LICENSE.md). Their complete corresponding source is
 available at the locations below.
 
-## Windows (x86_64) and Linux (x86_64, arm64)
+## Windows (x86_64, arm64) and Linux (x86_64, arm64)
 
-Built by BtbN/FFmpeg-Builds, release `autobuild-2026-09-30-13-08`, variant
+Built by BtbN/FFmpeg-Builds, release `autobuild-2026-10-31-12-59`, variant
 `gpl-shared`, FFmpeg release branch 9.0.
 
 - Build scripts: https://github.com/BtbN/FFmpeg-Builds
-  at commit `6c9aec5fc9a72ec3abedd1fa84db141fa18cf52b`
-  (tag `autobuild-2026-09-30-13-08`).
+  at commit `5031c6f1082414e53688d39e521849905071070d`
+  (tag `autobuild-2026-10-31-12-59`).
   Every library linked into the build is pinned there: each file in
   `scripts.d/` names the library's repository and exact commit
   (`SCRIPT_REPO` and `SCRIPT_COMMIT`), and `download.sh` fetches all of them.
 - FFmpeg: https://github.com/FFmpeg/FFmpeg
-  at commit `2a571b606854520cf89804d8030c8b328e621689`
-  (branch `release/9.0`; `git describe`: `n9.0.2-17-g2a571b6`).
+  at commit `7adfbe40dcde598f93a6963d2f7b22cd75202ccc`
+  (branch `release/9.0`; `git describe`: `n9.0.2-39-g7adfbe40dc`).
 
 To rebuild, at that commit of the build scripts, with `<target>` one of
-`win64`, `linux64`, `linuxarm64`:
+`win64`, `winarm64`, `linux64`, `linuxarm64`:
 
     ./makeimage.sh <target> gpl-shared 9.0
     ./build.sh <target> gpl-shared 9.0
